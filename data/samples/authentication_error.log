@@ -1,0 +1,10 @@
+2026-01-03T10:00:00Z INFO startup completed
+2026-01-03T10:01:00Z INFO health probe succeeded
+2026-01-03T10:02:00Z WARNING cache miss for unrelated product lookup
+2026-01-03T10:03:00Z ERROR AuthenticationError: JWT signature verification failed
+Traceback (most recent call last):
+  File "synthetic_service.py", line 42, in handle_request
+AuthenticationError: JWT signature verification failed
+2026-01-03T10:04:00Z ERROR AuthenticationError: JWT signature verification failed
+2026-01-03T10:05:00Z INFO background worker request succeeded
+2026-01-03T10:06:00Z ERROR AuthenticationError: JWT signature verification failed

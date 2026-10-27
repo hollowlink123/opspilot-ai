@@ -1,0 +1,10 @@
+2026-01-02T10:00:00Z INFO startup completed
+2026-01-02T10:01:00Z INFO health probe succeeded
+2026-01-02T10:02:00Z WARNING cache miss for unrelated product lookup
+2026-01-02T10:03:00Z ERROR TimeoutError: external payment API timed out after 5 seconds
+Traceback (most recent call last):
+  File "synthetic_service.py", line 42, in handle_request
+TimeoutError: external payment API timed out after 5 seconds
+2026-01-02T10:04:00Z ERROR TimeoutError: external payment API timed out after 5 seconds
+2026-01-02T10:05:00Z INFO background worker request succeeded
+2026-01-02T10:06:00Z ERROR TimeoutError: external payment API timed out after 5 seconds

@@ -1,0 +1,10 @@
+2026-01-01T10:00:00Z INFO startup completed
+2026-01-01T10:01:00Z INFO health probe succeeded
+2026-01-01T10:02:00Z WARNING cache miss for unrelated product lookup
+2026-01-01T10:03:00Z ERROR ConnectionError: db connection refused
+Traceback (most recent call last):
+  File "synthetic_service.py", line 42, in handle_request
+ConnectionError: db connection refused
+2026-01-01T10:04:00Z ERROR ConnectionError: db connection refused
+2026-01-01T10:05:00Z INFO background worker request succeeded
+2026-01-01T10:06:00Z ERROR ConnectionError: db connection refused
