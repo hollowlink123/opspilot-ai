@@ -12,10 +12,10 @@ class InputError(ValueError):
 
 
 SECRET_PATTERNS = [
-    (r'(?i)(\b(?:api[_-]?key|password|passwd|token|secret|authorization)\b["\x27]?\s*[:=]\s*)(?:"[^"\n]*"|\x27[^\x27\n]*\x27|[^\s,;]+)', r'\1[REDACTED]'),
+    (r'(?i)(\b(?:api[_-]?key|password|passwd|(?:access|refresh|id)[_-]?token|client[_-]?secret|token|secret|authorization)\b["\x27]?\s*[:=]\s*)(?:"[^"\n]*"|\x27[^\x27\n]*\x27|[^\s,;]+)', r'\1[REDACTED]'),
     (r'(?i)\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+', '[REDACTED_AUTH]'),
     (r'\b(?:AIza[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{16,}|AKIA[A-Z0-9]{16})\b', '[REDACTED]'),
-    (r'(?i)(https?://)[^\s/@]+:[^\s/@]+@', r'\1[REDACTED]@'),
+    (r'(?i)((?:https?|postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?)://)[^\s/@]+:[^\s/@]+@', r'\1[REDACTED]@'),
     (r'\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b', '[REDACTED_EMAIL]'),
     (r'(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----', '[REDACTED_PRIVATE_KEY]'),
 ]

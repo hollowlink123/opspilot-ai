@@ -88,3 +88,7 @@ On macOS/Linux use `.venv/bin/python -m pytest -q`, or `python -m pytest -q` aft
 - Context budgets can prevent completion. Initial context includes whole entries up to a budget; tools can retrieve more. Oversized tool results are withheld from the model with an explicit error.
 - This is not a hosted multi-user service. Do not expose it publicly without a separate security design. No investigations are deliberately persisted to disk by the application.
 - Windows commands are provided, but execution was validated on Linux, not on a Windows machine. Live model compatibility and quality require a credentialed smoke test.
+
+## Verification and security review
+
+Use the [canonical local verification gate](docs/evaluation.md#canonical-local-verification-gate) before committing. Automated tests block real Gemini/network access and use synthetic adversarial cases. See the [implementation checklist](docs/implementation-checklist.md) for evidence-backed requirement status and the [security review](docs/security-review.md) for fixed/open findings. Two strict expected failures document open acceptance gaps; they are not passing safety checks. Live Gemini security behavior still requires the documented synthetic smoke test.
