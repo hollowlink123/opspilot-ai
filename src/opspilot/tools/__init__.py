@@ -2,8 +2,8 @@
 import json
 from time import perf_counter
 from pydantic import ValidationError
-from ..log_parser import redact
-from ..models import Context, SearchArgs, CountArgs, IncidentArgs, EmptyArgs, Trace
+from ..log_parser import redact_value, sanitize_context
+from ..models import Context, SearchArgs, CountArgs, IncidentArgs, EmptyArgs, Trace, MAX_TOOL_RESULT_CHARS
 from .search_logs import search_logs
 from .count_errors import count_errors
 from .deployments import get_recent_deployments
@@ -17,7 +17,8 @@ REGISTRY = {
 }
 
 
-def execute(context: Context, name: str, arguments: dict) -> Trace:
+def execute(context: Context, name: str, arguments: dict, max_result_chars: int = MAX_TOOL_RESULT_CHARS,
+            sensitive_values: tuple[str, ...] = ()) -> Trace:
     start = perf_counter()
     trace = Trace(name=name if name in REGISTRY else 'unknown_tool', arguments={}, duration_ms=0.0)
     if name not in REGISTRY:
@@ -25,11 +26,15 @@ def execute(context: Context, name: str, arguments: dict) -> Trace:
         return trace
     schema, function, _ = REGISTRY[name]
     try:
+        context = sanitize_context(context, sensitive_values)
         validated = schema.model_validate(arguments)
-        safe_args = json.loads(redact(json.dumps(validated.model_dump())))
+        safe_args = redact_value(validated.model_dump(), sensitive_values)
         validated = schema.model_validate(safe_args)
         trace.arguments = validated.model_dump()
         trace.result = function(context, validated)
+        if len(json.dumps(trace.result.model_dump())) > min(max_result_chars, MAX_TOOL_RESULT_CHARS):
+            trace.result = None
+            trace.error = 'Tool result exceeds context budget; narrow the search.'
     except ValidationError:
         trace.error = 'Invalid tool arguments.'
     except (ValueError, TypeError, KeyError):

@@ -13,6 +13,9 @@ class Settings(BaseModel):
     max_context_chars: int = Field(default=60000, ge=1000, le=500000)
     timeout_seconds: int = Field(default=30, ge=1, le=120)
 
+    max_api_requests: int = Field(default=7, ge=1, le=21)
+    max_investigation_seconds: int = Field(default=90, ge=1, le=300)
+
     @classmethod
     def from_env(cls) -> "Settings":
         values = {name: os.environ[f"OPSPILOT_{name.upper()}"]

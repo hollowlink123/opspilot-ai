@@ -257,6 +257,17 @@ def test_oversized_tool_result_does_not_authorize_citations():
     result = investigate(context, Settings(model='test'), client)
     payload = client.requests[1]['contents'][-1].parts[0].function_response.response
     assert 'exceeds context budget' in payload['error']
-    assert result.traces[0].result  # Retained locally, withheld from the model.
+    assert result.traces[0].result is None  # Oversized results are not retained locally.
     assert 'invalid_evidence_reference' in result.error
+    assert result.report is None
+
+
+def test_causal_claim_failure_has_safe_category():
+    report = run_demo(SCENARIOS[0]).report
+    report.hypotheses = []
+    report.summary = 'Confirmed root cause: SYNTHETIC_PRIVATE'
+    client = FakeClient([response([types.Part(text='done')]),response([types.Part(text=report.model_dump_json())])])
+    result = investigate(load_sample(SCENARIOS[0]),Settings(model='test'),client)
+    assert 'unsupported_causal_claim' in result.error
+    assert 'SYNTHETIC_PRIVATE' not in result.error
     assert result.report is None

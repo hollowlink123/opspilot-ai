@@ -41,3 +41,43 @@ def test_invalid_report_schema():
     from opspilot.models import Report
     with pytest.raises(ValidationError):
         Report.model_validate({'title':'unsubstantiated'})
+
+
+@pytest.mark.parametrize('claim', [
+    'Confirmed root cause: database deleted.', 'Root cause is a bad deployment.',
+    'The root cause was a bad deployment.', 'The deployment is the proven cause.',
+    '**CONFIRMED** root cause: database deleted.', 'Con\u200bfirmed root cause: database deleted.',
+    'Ｃｏｎｆｉｒｍｅｄ root cause: database deleted.',
+])
+@pytest.mark.parametrize('field', ['summary','title','next_steps','finding'])
+def test_causal_certainty_rejected_in_every_report_surface(claim,field):
+    from opspilot.reporting import CausalClaimError
+    result = run_demo('database_failure')
+    if field == 'next_steps':
+        result.report.next_steps = [claim]
+    elif field == 'finding':
+        result.report.hypotheses[0].statement = claim
+    else:
+        setattr(result.report,field,claim)
+    with pytest.raises(CausalClaimError):
+        markdown_report(result,load_sample('database_failure'))
+
+
+def test_cause_status_is_never_confirmed():
+    from pydantic import ValidationError
+    from opspilot.models import Report
+    result = run_demo('database_failure')
+    assert result.report.cause_status == 'unconfirmed'
+    text = markdown_report(result,load_sample('database_failure'))
+    assert 'Root-cause status: unconfirmed' in text
+    assert 'unverified interpretation' in text
+    data = result.report.model_dump()
+    data['cause_status'] = 'confirmed'
+    with pytest.raises(ValidationError):
+        Report.model_validate(data)
+
+
+def test_cautious_hypothesis_with_real_refs_remains_allowed():
+    result = run_demo('database_failure')
+    result.report.summary = 'Cause remains unknown; a configuration mismatch may contribute.'
+    assert validate_report(result.report,load_sample('database_failure')).cause_status == 'unconfirmed'

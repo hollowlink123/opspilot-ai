@@ -51,6 +51,8 @@ A successful basic Gemini request checks connectivity, but does not verify funct
 | `api_authentication`, `api_permission`, `api_model_or_endpoint_not_found` | Check local credential/account permissions and the configured model. Do not share the key. |
 | `api_rate_limit`, `api_server_error`, `api_unavailable`, `api_timeout` | Check quota or provider availability; do not bypass the application's execution bounds. |
 | `request_timeout`, `network_transport` | Check network/proxy access and the configured per-request timeout. |
+| `api_request_limit`, `investigation_timeout`, `response_size_limit` | The total API request budget, cooperative deadline or returned response-size cap was reached; no complete report is accepted. Do not bypass bounds to obtain a result. |
+| `unsupported_causal_claim` | The report used common explicit causal-certainty language. The application does not establish confirmed causes; human review is required. |
 | `context_limit` | The serialized conversation exceeded the local character budget before sending. Thought signatures and prior tool results also consume this budget. Use smaller inputs/narrower searches; this is distinct from a provider token limit. |
 | `output_limit` | Gemini stopped at MAX_TOKENS. Partial output is rejected rather than interpreted as complete JSON or tool calls. |
 | `blocked_response`, `blocked_or_incomplete_response`, `empty_response` | The model blocked or did not complete a usable response. No report is inferred from it. |
@@ -96,7 +98,7 @@ These commands do not install dependencies or contact Gemini. Pytest's suite-wid
 Acceptance criteria:
 
 1. Zero unexpected test failures, zero unexpected passes of strict expected-failure tests, and no unexpectedly skipped checks.
-2. The two named expected failures below remain explicitly open; a green exit status does not certify those properties. If a future fix makes one pass, review the fix and remove its expected-failure marker in the same focused change.
+2. The two original expected failures below are historical audit evidence. Their assertions now pass as ordinary regressions after focused fixes; this does not certify general semantic truth or live model safety. Future expected failures must remain explicit and reviewed.
 3. Credential canaries do not occur in captured outbound requests, retained traces or exported reports for covered patterns.
 4. Injection tests retain untrusted text in data/tool roles and reject unregistered tools and invalid arguments, even when the mock model follows an attack.
 5. Existing loop/input/context limits, unavailable-source citation rejection and safe API-failure diagnostics still pass.
@@ -106,7 +108,7 @@ The suite uses deterministic backend checks, SDK-shaped mocked responses and in-
 
 ## Audit verification record (2026-10-27)
 
-The baseline debugging suite passed 77 tests before the audit. Five new credential-canary cases failed against the original redactor, establishing SEC-01 before the two-pattern application fix. Those five now pass. The full audited suite result is **110 passed, 2 xfailed**; no unexpected failures or skips. The two expected failures are:
+The baseline debugging suite passed 77 tests before the audit. Five new credential-canary cases failed against the original redactor, establishing SEC-01 before the two-pattern application fix. Those five now pass. The original audit suite result was **110 passed, 2 xfailed**; no unexpected failures or skips. The two original expected failures were:
 
 - `test_unsupported_confirmed_cause_is_rejected`: SEC-02, reference validation does not enforce semantic support.
 - `test_live_consent_resets_when_input_changes`: SEC-04, consent remains checked after input changes.
@@ -144,3 +146,13 @@ Use only a local synthetic UTF-8 `.log` file, an authorized account and a model 
 6. Without pressing Start, rerun the UI and confirm it reuses the result. Record only model ID, SDK version, executed tool names, safety observations and safe diagnostic codes. Avoid logging the key or raw provider errors.
 
 One successful run is limited evidence, not a measured prompt-injection success rate. A live test of malicious *tool-result* text and multiple runs/models remain separate unverified evaluations; the automated test covers the deterministic backend response to such text. Stop live validation on any leakage or unauthorized behavior and retain only a sanitized reproducer.
+
+## Medium-severity follow-up verification
+
+The focused follow-up adds consent invalidation, source/event/report/result caps, a total API-request budget, cooperative deadline checks, conservative causal-certainty rejection with fixed unconfirmed status, and sanitation at direct-input/tool/export boundaries. It preserves the declared four tools, strict arguments, protocol response IDs/signatures and unavailable-source citation rejection.
+
+Full suites were run after each change area. The final result is **183 passed**, no failures, skips or expected failures. The old consent/explicit-confirmation gap assertions now pass without xfail markers. New regression suites are `tests/test_resources.py` and `tests/test_privacy.py`; existing UI/reporting/agent tests were extended. Adversarial testing remains synthetic and offline under the existing test guards.
+
+Current default total budget is seven API requests (including final reporting) and 90 seconds. Configure `OPSPILOT_MAX_API_REQUESTS` and `OPSPILOT_MAX_INVESTIGATION_SECONDS` within their hard maxima of 21 and 300. Each request timeout is capped by the remaining monotonic deadline, but a blocked dependency call is not forcibly interrupted. Tests verify passed timeout options and rejection of late replies with fake clocks, not real provider cancellation.
+
+For a follow-up live smoke test, use the existing synthetic fixture only. Also change the selected input after checking consent: the checkbox must clear and Start must disable until fresh approval. Confirm the report's unconfirmed status and uncertainty labels, or a safe `unsupported_causal_claim` error if explicit confirmation is attempted. A successful run remains evidence for that one model/version/input only. Windows upload behavior, real API schema acceptance/latency and semantic resistance to novel injection phrasing remain unverified.

@@ -162,7 +162,6 @@ def test_report_markup_is_inert():
     assert '<script>' not in exported and '<img' not in exported
 
 
-@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception, reason='SEC-02: reference existence cannot establish semantic support')
 def test_unsupported_confirmed_cause_is_rejected():
     context = parse_logs(b'INFO health check passed','a.log')
     report = report_for(context)

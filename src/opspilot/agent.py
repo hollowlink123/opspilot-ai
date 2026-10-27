@@ -1,14 +1,16 @@
 """Manual Gemini protocol loop. Backend validation controls all tool execution."""
 import json
 import logging
+from time import monotonic
 import httpx
 from pydantic import ValidationError
 from google import genai
 from google.genai import types, errors
 from .config import Settings
+from .log_parser import InputError, sanitize_context
 from .models import Context, Investigation, Report
 from .prompts import SYSTEM_INSTRUCTION
-from .reporting import ReportError, validate_report
+from .reporting import CausalClaimError, ReportError, validate_report
 from .tools import REGISTRY, execute
 
 
@@ -50,6 +52,10 @@ def failure_category(exc: Exception) -> str:
     """Classify without formatting exception messages, inputs, URLs or tracebacks."""
     if isinstance(exc, WorkflowFailure):
         return exc.args[0]
+    if isinstance(exc, InputError):
+        return 'input_limit'
+    if isinstance(exc, CausalClaimError):
+        return 'unsupported_causal_claim'
     if isinstance(exc, ReportError):
         return 'invalid_evidence_reference'
     if isinstance(exc, ValidationError):
@@ -77,13 +83,16 @@ def investigate(context: Context, settings: Settings, client=None) -> Investigat
         result.error = 'Set GEMINI_API_KEY and GEMINI_MODEL to enable live investigation.'
         return result
     owned_client = client is None
-    state = {'stage': 'client_setup'}
+    state = {'stage': 'input_validation'}
+    deadline = monotonic() + settings.max_investigation_seconds
     try:
+        context = sanitize_context(context, (settings.api_key.get_secret_value(),) if settings.api_key else ())
+        state['stage'] = 'client_setup'
         if owned_client:
             client = genai.Client(api_key=settings.api_key.get_secret_value(),
                 http_options=types.HttpOptions(timeout=settings.timeout_seconds * 1000,
                     retry_options=types.HttpRetryOptions(attempts=1)))
-        return _run(context, settings, client, result, state)
+        return _run(context, settings, client, result, state, deadline)
     except Exception as exc:
         category = failure_category(exc)
         # Only fixed stage/category labels are logged. Never log exc or exc_info.
@@ -103,7 +112,7 @@ def investigate(context: Context, settings: Settings, client=None) -> Investigat
 
 
 def _run(context: Context, settings: Settings, client, result: Investigation,
-         state: dict[str, str]) -> Investigation:
+         state: dict[str, str], deadline: float) -> Investigation:
     state['stage'] = 'sdk_configuration'
     # Only include whole entries; silently truncating an entry could corrupt evidence.
     selected = []
@@ -125,11 +134,32 @@ def _run(context: Context, settings: Settings, client, result: Investigation,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         max_output_tokens=4096)
 
-    def request(request_config):
+    request_count = 0
+
+    def check_deadline() -> float:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise WorkflowFailure('investigation_timeout')
+        return remaining
+
+    def request(request_config: types.GenerateContentConfig) -> types.GenerateContentResponse:
+        nonlocal request_count
+        remaining = check_deadline()
+        if request_count >= settings.max_api_requests:
+            raise WorkflowFailure('api_request_limit')
         serialized = json.dumps([c.model_dump(mode='json', exclude_none=True) for c in contents])
         if len(serialized) > settings.max_context_chars:
             raise WorkflowFailure('context_limit')
-        return client.models.generate_content(model=settings.model, contents=contents, config=request_config)
+        remaining = check_deadline()
+        request_config = request_config.model_copy(update={'http_options': types.HttpOptions(
+            timeout=max(1, int(min(settings.timeout_seconds, remaining) * 1000)),
+            retry_options=types.HttpRetryOptions(attempts=1))})
+        request_count += 1
+        response = client.models.generate_content(model=settings.model, contents=contents, config=request_config)
+        check_deadline()
+        if len(response.model_dump_json()) > 100000:
+            raise WorkflowFailure('response_size_limit')
+        return response
 
     for _ in range(settings.max_steps):
         state['stage'] = 'tool_request'
@@ -147,14 +177,20 @@ def _run(context: Context, settings: Settings, client, result: Investigation,
         state['stage'] = 'tool_execution'
         parts = []
         for call in calls:
+            check_deadline()
             if not call.name:
                 raise WorkflowFailure('malformed_function_call')
-            trace = execute(context, call.name, call.args if call.args is not None else {})
+            trace = execute(context, call.name, call.args if call.args is not None else {},
+                            max_result_chars=settings.max_context_chars // 4,
+                            sensitive_values=(settings.api_key.get_secret_value(),) if settings.api_key else ())
             result.traces.append(trace)
+            check_deadline()
             payload = {'error': trace.error} if trace.error else trace.result.model_dump()
             if len(json.dumps(payload)) > settings.max_context_chars // 4:
                 payload = {'error': 'Tool result exceeds context budget; narrow the search.'}
-                # Trace retains the actual result locally; no references become available.
+                trace.result = None
+                trace.error = payload['error']
+                # Never retain oversized output or authorize its references.
             elif trace.result:
                 available.update(trace.result.references)
             parts.append(types.Part(function_response=types.FunctionResponse(
@@ -179,10 +215,14 @@ def _run(context: Context, settings: Settings, client, result: Investigation,
     state['stage'] = 'report_schema'
     report = Report.model_validate_json(text)
     state['stage'] = 'evidence_validation'
-    report = validate_report(report, context, available)
+    report = validate_report(report, context, available,
+        sensitive_values=(settings.api_key.get_secret_value(),) if settings.api_key else ())
     report.limitations.extend(['Source existence is validated; semantic support requires human review.',
                                'Operational records are synthetic and cannot establish production causes.'])
     if len(selected) < len(context.logs):
         report.limitations.append('Initial log context was limited; tools may not have retrieved all omitted entries.')
+    state['stage'] = 'report_finalization'
+    report = Report.model_validate(report.model_dump())
+    check_deadline()
     result.report = report
     return result
