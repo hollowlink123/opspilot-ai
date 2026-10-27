@@ -1,0 +1,23 @@
+[
+  {
+    "id": "deployment:database_failure",
+    "scenario": "database_failure",
+    "timestamp": "2026-01-01T10:00:00Z",
+    "description": "Database endpoint changed; old endpoint is still reachable from a separate worker.",
+    "synthetic": true
+  },
+  {
+    "id": "deployment:api_timeout",
+    "scenario": "api_timeout",
+    "timestamp": "2026-01-02T10:00:00Z",
+    "description": "Client timeout reduced from 15 to 5 seconds; upstream latency is not measured.",
+    "synthetic": true
+  },
+  {
+    "id": "deployment:authentication_error",
+    "scenario": "authentication_error",
+    "timestamp": "2026-01-03T10:00:00Z",
+    "description": "Signing key identifier changed; one worker still uses a cached configuration.",
+    "synthetic": true
+  }
+]
