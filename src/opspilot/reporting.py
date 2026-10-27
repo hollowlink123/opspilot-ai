@@ -1,6 +1,8 @@
 """Reference validation is deterministic; semantic claim support still needs review."""
 import html
-from .log_parser import redact
+import re
+import unicodedata
+from .log_parser import redact_value, sanitize_context
 from .models import Context, Report, Investigation
 
 
@@ -8,32 +10,50 @@ class ReportError(ValueError):
     pass
 
 
+class CausalClaimError(ReportError):
+    """A report asserts causal certainty this application cannot establish."""
+
+
+def reject_causal_certainty(report: Report) -> None:
+    # This is a conservative wording guard, not semantic entailment checking.
+    texts = [report.title, report.summary, *report.missing_information,
+             *report.next_steps, *report.limitations]
+    texts += [finding.statement for finding in report.observed_symptoms +
+              report.hypotheses + report.contradictory_evidence]
+    certainty = r'\b(?:confirmed|proven|verified|definitive(?:ly)?|certain(?:ly)?|established)\b'
+    cause = r'\b(?:root\s+cause|cause|caused|causality)\b'
+    for text in texts:
+        normalized = unicodedata.normalize('NFKC', text).casefold()
+        normalized = ''.join(c for c in normalized if unicodedata.category(c) != 'Cf')
+        normalized = re.sub(r'[*_`#]', '', normalized)
+        normalized = ' '.join(normalized.split())
+        if (re.search(certainty + r'.{0,80}' + cause, normalized)
+                or re.search(cause + r'.{0,80}' + certainty, normalized)
+                or re.search(r'\broot\s+cause\s*(?::|=|\bis\b|\bwas\b)', normalized)):
+            raise CausalClaimError('Report asserts unsupported causal certainty.')
+
+
 def evidence_catalog(context: Context) -> dict[str, str]:
+    context = sanitize_context(context)
     catalog = {}
     for entry in context.logs:
-        for offset, line in enumerate(entry.message.splitlines()):
+        for offset, line in enumerate(entry.message.split('\n')):
             catalog[f'log:{entry.line + offset}'] = line
     catalog.update({r.id: 'SYNTHETIC: ' + r.description for r in context.records})
     return catalog
 
 
-def validate_report(report: Report, context: Context, available: set[str] | None = None) -> Report:
+def validate_report(report: Report, context: Context, available: set[str] | None = None,
+                    sensitive_values: tuple[str, ...] = ()) -> Report:
+    report = Report.model_validate(report.model_dump())
     valid = set(evidence_catalog(context))
     if available is not None:
         valid &= available
     for finding in report.observed_symptoms + report.hypotheses + report.contradictory_evidence:
         if not set(finding.references) <= valid:
             raise ReportError('Report cites nonexistent or unavailable evidence.')
-    # Redact all model-generated fields before display or persistence.
-    def clean(value):
-        if isinstance(value, str):
-            return redact(value)
-        if isinstance(value, list):
-            return [clean(v) for v in value]
-        if isinstance(value, dict):
-            return {k: clean(v) for k, v in value.items()}
-        return value
-    return Report.model_validate(clean(report.model_dump()))
+    reject_causal_certainty(report)
+    return Report.model_validate(redact_value(report.model_dump(), sensitive_values))
 
 
 def plain(text: str) -> str:
@@ -44,14 +64,18 @@ def plain(text: str) -> str:
     return text
 
 
-def markdown_report(investigation: Investigation, context: Context) -> str:
+def markdown_report(investigation: Investigation, context: Context,
+                    sensitive_values: tuple[str, ...] = ()) -> str:
     if investigation.report is None:
         raise ReportError('No validated report is available.')
-    report = validate_report(investigation.report, context)
+    context = sanitize_context(context, sensitive_values)
+    report = validate_report(investigation.report, context, sensitive_values=sensitive_values)
     lines = [f'# {plain(report.title)}', '',
              '**OFFLINE DEMO — predetermined analysis; no model inference.**' if investigation.mode == 'demo'
-             else '**LIVE — model interpretations require human review.**', '', plain(report.summary)]
-    for label, findings in [('Observed symptoms', report.observed_symptoms),
+             else '**LIVE — model interpretations require human review.**', '',
+             '**Root-cause status: unconfirmed. Interpretations below are unverified; citations do not establish causality.**',
+             '', plain(report.summary)]
+    for label, findings in [('Reported symptoms — unverified interpretation', report.observed_symptoms),
                             ('Possible causes — hypotheses', report.hypotheses),
                             ('Contradictory evidence', report.contradictory_evidence)]:
         lines += ['', f'## {label}']
@@ -60,7 +84,7 @@ def markdown_report(investigation: Investigation, context: Context) -> str:
                          ('Next investigation steps', report.next_steps),
                          ('Limitations', report.limitations)]:
         lines += ['', f'## {label}'] + [f'- {plain(item)}' for item in items]
-    lines += ['', '## Cited source evidence']
+    lines += ['', '## Cited source evidence — untrusted source text']
     catalog = evidence_catalog(context)
     refs = sorted({r for f in report.observed_symptoms + report.hypotheses + report.contradictory_evidence for r in f.references})
     lines += [f'- {plain(ref)}: {plain(catalog[ref])}' for ref in refs]

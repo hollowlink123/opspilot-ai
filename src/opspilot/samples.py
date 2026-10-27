@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 from pydantic import ValidationError
-from .log_parser import InputError, parse_logs, redact
+from .log_parser import InputError, parse_logs, redact_value
 from .models import Context, OperationalRecord
 
 SAMPLE_DIR = Path(__file__).resolve().parents[2] / 'data' / 'samples'
@@ -22,9 +22,7 @@ def load_records(directory: Path = SAMPLE_DIR) -> list[OperationalRecord]:
             records.extend(OperationalRecord.model_validate(r) for r in data)
         if len({r.id for r in records}) != len(records):
             raise ValueError('Duplicate IDs')
-        for record in records:
-            record.description = redact(record.description)
-        return records
+        return [OperationalRecord.model_validate(redact_value(record.model_dump())) for record in records]
     except (OSError, ValueError, ValidationError, RecursionError):
         raise InputError('Sample operational data is missing or invalid.') from None
 

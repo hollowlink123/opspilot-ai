@@ -35,7 +35,7 @@ No Docker, database or model credentials are needed for the demo. For the tested
 
 ## Offline demo
 
-Choose **Offline demo**, select one of the three incidents and click **Start investigation**. The parser and all four tools run locally. The report is predetermined and clearly labeled; it is not presented as AI reasoning. Change scenarios to clear previous results. The tool history and Markdown download show the current investigation only. Uploads are intentionally disabled in demo mode.
+Choose **Offline demo**, select one of the three incidents and click **Start investigation**. The parser and all four tools run locally. The report is predetermined and clearly labeled; it is not presented as AI reasoning. Changing scenario, mode, uploaded file identity/content, or non-secret settings clears previous results and live consent. Unchanged reruns retain consent. The tool history and Markdown download show the current investigation only. Uploads are intentionally disabled in demo mode.
 
 ## Live Gemini
 
@@ -64,8 +64,10 @@ Configuration:
 | `OPSPILOT_MAX_TOOL_CALLS` | 12 | Maximum backend tool executions |
 | `OPSPILOT_MAX_CONTEXT_CHARS` | 60000 | Serialized conversation budget |
 | `OPSPILOT_TIMEOUT_SECONDS` | 30 | Timeout per model request; SDK retries disabled |
+| `OPSPILOT_MAX_API_REQUESTS` | 7 | Total selection plus report requests; maximum 21 |
+| `OPSPILOT_MAX_INVESTIGATION_SECONDS` | 90 | Overall cooperative deadline; maximum 300 seconds |
 
-The final structured-report request is an additional model request beyond the step limit. A failure or exhausted budget returns a clear error and any completed tool traces, not a fabricated report.
+The final structured-report request is additional to the step limit but counts against the total API-request budget. Each request timeout is capped by the remaining overall deadline; late responses are rejected. The deadline does not forcibly interrupt a blocked SDK call. A failure or exhausted budget returns a clear error and any completed tool traces, not a fabricated report.
 
 ## Architecture
 
@@ -82,13 +84,14 @@ On macOS/Linux use `.venv/bin/python -m pytest -q`, or `python -m pytest -q` aft
 ## Limitations
 
 - Secret redaction is best effort, not a guarantee. Inspect and minimize sensitive data before sending it externally. Reports and tool traces may still contain non-secret sensitive content.
-- Citation existence and availability are checked; semantic support and causal truth are not automatically proven. Review model interpretations.
+- Citation existence and availability are checked; semantic support and causal truth are not automatically proven. All reports carry `cause_status=unconfirmed` and prominent uncertainty labels. A conservative wording guard rejects common causal-certainty claims, including some benign quotations/negations; it is not a semantic or multilingual guarantee. Review model interpretations.
 - JSON logs retain physical lines rather than a universal nested JSON event schema. Unrecognized metadata stays unknown. Error-type grouping recognizes names ending in `Error` or `Exception`; unrecognized types and timestamps use `unknown`.
 - Similar incident retrieval is simple keyword matching, not semantic search. Operational records are synthetic, not live system information.
+- Processing also rejects more than 10,000 source lines, any line/event above 16,000 characters, or more than 2,000,000 combined log-message/record-description characters. Report list items are capped at 2,000 characters. Oversized tool outputs are discarded from traces at the smaller of 16,000 serialized characters and one quarter of the configured context budget.
 - Context budgets can prevent completion. Initial context includes whole entries up to a budget; tools can retrieve more. Oversized tool results are withheld from the model with an explicit error.
 - This is not a hosted multi-user service. Do not expose it publicly without a separate security design. No investigations are deliberately persisted to disk by the application.
 - Windows commands are provided, but execution was validated on Linux, not on a Windows machine. Live model compatibility and quality require a credentialed smoke test.
 
 ## Verification and security review
 
-Use the [canonical local verification gate](docs/evaluation.md#canonical-local-verification-gate) before committing. Automated tests block real Gemini/network access and use synthetic adversarial cases. See the [implementation checklist](docs/implementation-checklist.md) for evidence-backed requirement status and the [security review](docs/security-review.md) for fixed/open findings. Two strict expected failures document open acceptance gaps; they are not passing safety checks. Live Gemini security behavior still requires the documented synthetic smoke test.
+Use the [canonical local verification gate](docs/evaluation.md#canonical-local-verification-gate) before committing. Automated tests block real Gemini/network access and use synthetic adversarial cases. See the [implementation checklist](docs/implementation-checklist.md) for evidence-backed requirement status and the [security review](docs/security-review.md) for fixed/open findings. The former consent and explicit causal-certainty expected failures are now ordinary passing regression tests. Reports enforce an unconfirmed cause status and conservative wording checks; semantic truth is still not established. Live Gemini security behavior still requires the documented synthetic smoke test.

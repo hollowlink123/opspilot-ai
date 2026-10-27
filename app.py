@@ -1,11 +1,12 @@
 """Streamlit UI; investigations run only on explicit button presses."""
 import hashlib
+import json
 import streamlit as st
 from pydantic import ValidationError
 from opspilot.agent import investigate
 from opspilot.config import Settings
 from opspilot.demo import run_demo
-from opspilot.log_parser import InputError, parse_logs
+from opspilot.log_parser import InputError, parse_logs, sanitize_context
 from opspilot.reporting import markdown_report
 from opspilot.samples import SCENARIOS, load_sample
 
@@ -25,27 +26,42 @@ upload = st.file_uploader('Upload UTF-8 logs for live investigation', type=['log
                           disabled=mode == 'Offline demo', max_upload_size=max(1, settings.max_upload_bytes // 1048576))
 st.warning('Redaction is best effort. Review the redacted preview before sending any logs to Gemini.')
 context = None
+upload_bytes = upload.getvalue() if upload is not None else None
 try:
     if mode == 'Offline demo':
         st.info('OFFLINE DEMO: synthetic data and predetermined findings. No Gemini requests. Tool executions are real local Python calls.')
         context = load_sample(scenario)
     elif upload is not None:
-        context = parse_logs(upload.getvalue(), upload.name, settings.max_upload_bytes)
+        context = parse_logs(upload_bytes, upload.name, settings.max_upload_bytes)
         st.caption('Uploaded logs have no associated operational records. Sample deployments are not attached to your upload.')
     else:
         context = load_sample(scenario)
         st.info('Live Gemini will analyze synthetic sample logs and synthetic operational records.')
+    context = sanitize_context(context, (settings.api_key.get_secret_value(),) if settings.api_key else ())
 except InputError as error:
+    context = None
     st.error(str(error))
+except ValidationError:
+    context = None
+    st.error('Input could not be safely sanitized within the processing limits.')
 
-fingerprint = hashlib.sha256((mode + scenario + (context.model_dump_json() if context else '')).encode()).hexdigest()
+# Include raw file identity/digest: two files can redact to identical previews.
+fingerprint = hashlib.sha256(json.dumps({
+    'mode': mode, 'scenario': scenario,
+    'upload_name': upload.name if upload is not None else None,
+    'upload_id': getattr(upload, 'file_id', None),
+    'upload_digest': hashlib.sha256(upload_bytes).hexdigest() if upload_bytes is not None else None,
+    'context': context.model_dump() if context else None,
+    'settings': settings.model_dump(exclude={'api_key'}),
+}, sort_keys=True).encode()).hexdigest()
 if st.session_state.get('input_fingerprint') != fingerprint:
     st.session_state.pop('investigation', None)
+    st.session_state['consent'] = False
     st.session_state['input_fingerprint'] = fingerprint
 if context:
     with st.expander('Redacted log preview and source lines', expanded=False):
         st.dataframe([e.model_dump() for e in context.logs], hide_index=True, width="stretch")
-    consent = st.checkbox('I reviewed the redacted content and authorize sending it to Gemini.', disabled=mode == 'Offline demo')
+    consent = st.checkbox('I reviewed the redacted content and authorize sending it to Gemini.', disabled=mode == 'Offline demo', key='consent')
     ready = mode == 'Offline demo' or (consent and bool(settings.api_key) and bool(settings.model))
     if mode == 'Live Gemini' and not (settings.api_key and settings.model):
         st.info('Set GEMINI_API_KEY and GEMINI_MODEL in your environment to enable live mode.')
