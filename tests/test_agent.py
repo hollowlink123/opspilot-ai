@@ -143,10 +143,11 @@ def test_safe_failure_categories(failure, category, caplog):
     (404, 'api_model_or_endpoint_not_found'), (429, 'api_rate_limit'),
     (500, 'api_server_error'), (503, 'api_unavailable'), (504, 'api_timeout'),
 ])
-def test_safe_api_errors(code, category, caplog):
+def test_safe_api_errors(code, category, caplog, monkeypatch):
     from google.genai.errors import APIError
+    monkeypatch.setattr('opspilot.agent.sleep', lambda seconds: None)
     error = APIError(code, {'error': {'message':'SECRET_LOG', 'status':'PRIVATE_STATUS'}})
-    result = investigate(load_sample(SCENARIOS[0]), Settings(model='test'), FakeClient([error]))
+    result = investigate(load_sample(SCENARIOS[0]), Settings(model='test'), FakeClient([error] * 3))
     assert category in result.error
     assert 'SECRET_LOG' not in result.error + caplog.text
     assert 'PRIVATE_STATUS' not in caplog.text

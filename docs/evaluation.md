@@ -63,6 +63,12 @@ A successful basic Gemini request checks connectivity, but does not verify funct
 
 Unknown tools and invalid arguments still produce safe tool-error responses so Gemini may recover within the existing limits. Missing function names are rejected. Client setup errors are caught; cleanup errors emit only a fixed warning and cannot mask the original outcome.
 
+Tool-selection and structured-report requests retry HTTP 500, 502, 503 and 504 at most twice, after 1 and 2 seconds. Every attempt counts against `OPSPILOT_MAX_API_REQUESTS`; delays and attempts share `OPSPILOT_MAX_INVESTIGATION_SECONDS`. Insufficient time for the next delay yields `investigation_timeout`; an exhausted request budget yields `api_request_limit`. After three failed attempts with time remaining, the last safe API category is retained (for example, `tool_request/api_unavailable`). Other status codes, transport errors, unusable responses and invalid reports are not retried. Retry diagnostics contain only stage/category, retry number and delay; provider messages remain withheld.
+
+`tests/test_retries.py` uses SDK-shaped failures and a fake clock to check recovery in both phases, exponential backoff, retry exhaustion, shared request budgets, shrinking timeouts, deadline exhaustion/oversleep/late responses, non-retryable failures, secret-safe diagnostics, preserved signed parallel tool history without duplicate executions, and evidence rejection after recovery. These mocks do not establish real Gemini availability, error timing, billing, or recovery rates. For local verification, run the built-in synthetic Database Failure scenario once in Live Gemini mode and record only the model ID, SDK version and safe stage/category/retry diagnostics. Do not enable HTTP body or credential logging. A continuing 503 after bounded retries may still reflect a provider outage; changing models or adding retries cannot guarantee success.
+
+Retry-change validation on 2026-10-28: `.venv/bin/python -m pytest -q` completed with **214 passed in 4.37s**, with no failures, skips or expected failures. `git diff --check` passed. No live Gemini request was made; real provider recovery and Windows behavior remain unverified.
+
 Windows PowerShell, from the checkout containing this fix:
 
 ```powershell
