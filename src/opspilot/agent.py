@@ -1,7 +1,7 @@
 """Manual Gemini protocol loop. Backend validation controls all tool execution."""
 import json
 import logging
-from time import monotonic
+from time import monotonic, sleep
 import httpx
 from pydantic import ValidationError
 from google import genai
@@ -21,6 +21,8 @@ def tool_declarations() -> list[types.FunctionDeclaration]:
 
 
 LOGGER = logging.getLogger(__name__)
+RETRYABLE_API_CODES = frozenset({500, 502, 503, 504})
+RETRY_DELAYS_SECONDS = (1, 2)
 
 
 class WorkflowFailure(Exception):
@@ -144,18 +146,41 @@ def _run(context: Context, settings: Settings, client, result: Investigation,
 
     def request(request_config: types.GenerateContentConfig) -> types.GenerateContentResponse:
         nonlocal request_count
-        remaining = check_deadline()
+        check_deadline()
         if request_count >= settings.max_api_requests:
             raise WorkflowFailure('api_request_limit')
         serialized = json.dumps([c.model_dump(mode='json', exclude_none=True) for c in contents])
         if len(serialized) > settings.max_context_chars:
             raise WorkflowFailure('context_limit')
-        remaining = check_deadline()
-        request_config = request_config.model_copy(update={'http_options': types.HttpOptions(
-            timeout=max(1, int(min(settings.timeout_seconds, remaining) * 1000)),
-            retry_options=types.HttpRetryOptions(attempts=1))})
-        request_count += 1
-        response = client.models.generate_content(model=settings.model, contents=contents, config=request_config)
+        for attempt in range(len(RETRY_DELAYS_SECONDS) + 1):
+            remaining = check_deadline()
+            if request_count >= settings.max_api_requests:
+                raise WorkflowFailure('api_request_limit')
+            attempt_config = request_config.model_copy(update={'http_options': types.HttpOptions(
+                timeout=max(1, int(min(settings.timeout_seconds, remaining) * 1000)),
+                # Application retries share the investigation budget; no hidden SDK retries.
+                retry_options=types.HttpRetryOptions(attempts=1))})
+            request_count += 1
+            try:
+                response = client.models.generate_content(
+                    model=settings.model, contents=contents, config=attempt_config)
+                break
+            except errors.APIError as exc:
+                if exc.code not in RETRYABLE_API_CODES:
+                    raise
+                remaining = check_deadline()
+                if attempt == len(RETRY_DELAYS_SECONDS):
+                    raise  # Preserve the safe API category after retry exhaustion.
+                if request_count >= settings.max_api_requests:
+                    raise WorkflowFailure('api_request_limit') from None
+                delay = RETRY_DELAYS_SECONDS[attempt]
+                if remaining <= delay:
+                    raise WorkflowFailure('investigation_timeout') from None
+                # Log only fixed labels/numbers, never provider text or request contents.
+                LOGGER.warning('OpsPilot retry: stage=%s category=%s retry=%s delay_seconds=%s',
+                               state['stage'], failure_category(exc), attempt + 1, delay)
+                sleep(delay)
+                # The next iteration rechecks the deadline, including scheduler oversleep.
         check_deadline()
         if len(response.model_dump_json()) > 100000:
             raise WorkflowFailure('response_size_limit')

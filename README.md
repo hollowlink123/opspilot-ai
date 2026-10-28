@@ -64,10 +64,12 @@ Configuration:
 | `OPSPILOT_MAX_TOOL_CALLS` | 12 | Maximum backend tool executions |
 | `OPSPILOT_MAX_CONTEXT_CHARS` | 60000 | Serialized conversation budget |
 | `OPSPILOT_TIMEOUT_SECONDS` | 30 | Timeout per model request; SDK retries disabled |
-| `OPSPILOT_MAX_API_REQUESTS` | 7 | Total selection plus report requests; maximum 21 |
+| `OPSPILOT_MAX_API_REQUESTS` | 7 | Total selection/report attempts, including retries; maximum 21 |
 | `OPSPILOT_MAX_INVESTIGATION_SECONDS` | 90 | Overall cooperative deadline; maximum 300 seconds |
 
 The final structured-report request is additional to the step limit but counts against the total API-request budget. Each request timeout is capped by the remaining overall deadline; late responses are rejected. The deadline does not forcibly interrupt a blocked SDK call. A failure or exhausted budget returns a clear error and any completed tool traces, not a fabricated report.
+
+HTTP 500, 502, 503 and 504 receive at most two application retries per request, with exponential delays of 1 and 2 seconds. Both tool-selection and report requests use this policy. Every attempt consumes the same total request budget; backoff consumes the overall deadline, and no retry is scheduled when its delay would exhaust the remaining time. SDK retries remain disabled. Other failures, including 429, transport errors and invalid reports, are not retried. Persistent failures retain safe error categories; retries cannot guarantee recovery during a provider outage and may incur additional API usage within the existing budget.
 
 ## Architecture
 
