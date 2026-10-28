@@ -3,7 +3,7 @@
 ## Components and flow
 
 1. Streamlit receives an upload or fixed sample selection. Upload content is UTF-8 text, extension-checked and byte-limited.
-2. The parser retains physical source lines, normalizes recognized timestamps/severity, groups bounded traceback continuations and redacts likely credentials. Source lines, event sizes and combined source content have hard caps. Unknown fields are not inferred.
+2. The parser retains physical source lines, normalizes recognized timestamps/severity, groups bounded Python/Java traceback continuations and redacts likely credentials. Single-line JSON objects use explicit top-level metadata, and nginx common/combined access lines use their timestamp and HTTP status fields. nginx 5xx/4xx/other valid statuses map to ERROR/WARNING/INFO; unknown JSON metadata stays unknown. Raw bounded lines are inspected only to derive normalized metadata because text redaction can invalidate JSON syntax; only redacted source text is retained in the context. Fully masked private-key lines supply no metadata. Source lines, event sizes and combined source content retain their hard caps. `.json` accepts a JSON document or one object per nonblank physical line; malformed JSON-lines input fails with a fixed error.
 3. A revalidated, sanitized context copy holds redacted logs and, for demos/sample investigations only, explicitly synthetic records. Uploaded logs have no sample records attached.
 4. The agent sends a bounded initial context and explicit tool declarations to Gemini. SDK automatic execution is disabled.
 5. The model chooses a function. The closed Python registry checks its name and strict Pydantic arguments, then executes a trusted read-only function against this context.

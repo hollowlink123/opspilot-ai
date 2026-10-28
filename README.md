@@ -5,7 +5,7 @@ OpsPilot AI is a local, single-user incident investigation application. It bring
 ## Features
 
 - UTF-8 `.log`, `.txt` and `.json` input, bounded uploads and redacted previews.
-- Physical source line references, timestamps, severity and multiline Python tracebacks.
+- Physical source line references, timestamps, severity, nginx common/combined access logs, JSON object lines, and multiline Python/Java traces.
 - Four validated read-only tools: log search, error counts, synthetic deployments and historical incident lookup.
 - A bounded, model-driven Gemini tool loop using the official Google Gen AI SDK.
 - Pydantic reports, deterministic citation checks, tool history and Markdown download.
@@ -88,12 +88,14 @@ On macOS/Linux use `.venv/bin/python -m pytest -q`, or `python -m pytest -q` aft
 
 - Secret redaction is best effort, not a guarantee. Inspect and minimize sensitive data before sending it externally. Reports and tool traces may still contain non-secret sensitive content.
 - Citation existence and availability are checked; semantic support and causal truth are not automatically proven. All reports carry `cause_status=unconfirmed` and prominent uncertainty labels. A conservative wording guard rejects common causal-certainty claims, including some benign quotations/negations; it is not a semantic or multilingual guarantee. Review model interpretations.
-- JSON logs retain physical lines rather than a universal nested JSON event schema. Unrecognized metadata stays unknown. Error-type grouping recognizes names ending in `Error` or `Exception`; unrecognized types and timestamps use `unknown`.
+- JSON documents and JSON object lines retain redacted physical lines rather than a universal nested event schema. For single-line objects, metadata comes from top-level `level`/`severity` and ISO `timestamp`/`@timestamp`/`time` fields (first present field in each list wins); message text does not supply missing metadata. Numeric levels, nested schemas and general pretty-printed JSON event extraction are not normalized. JSON-lines content can use the existing `.log`, `.txt` or `.json` extensions; `.jsonl` is not an accepted upload extension.
+- nginx common/combined access timestamps include their source timezone. HTTP 5xx maps to `ERROR`, 4xx to `WARNING`, and 1xx–3xx to `INFO`; this is response-status classification, not evidence of a root cause. Custom access formats fall back to plain-text parsing. Common Java exception/cause/frame lines stay with their initiating event; interleaved traces are not separated by thread. Error-type grouping recognizes names ending in `Error` or `Exception`; unrecognized types and timestamps use `unknown`.
 - Similar incident retrieval is simple keyword matching, not semantic search. Operational records are synthetic, not live system information.
 - Processing also rejects more than 10,000 source lines, any line/event above 16,000 characters, or more than 2,000,000 combined log-message/record-description characters. Report list items are capped at 2,000 characters. Oversized tool outputs are discarded from traces at the smaller of 16,000 serialized characters and one quarter of the configured context budget.
 - Context budgets can prevent completion. Initial context includes whole entries up to a budget; tools can retrieve more. Oversized tool results are withheld from the model with an explicit error.
 - This is not a hosted multi-user service. Do not expose it publicly without a separate security design. No investigations are deliberately persisted to disk by the application.
 - Windows commands are provided, but execution was validated on Linux, not on a Windows machine. Live model compatibility and quality require a credentialed smoke test.
+- Live Gemini HTTP 400 remains unresolved, including a user-reported text-only REST failure. Parser tests and Offline Demo success do not verify live generation or a complete AI investigation. See the [live issue record](docs/evaluation.md#unresolved-live-gemini-http-400).
 
 ## Verification and security review
 

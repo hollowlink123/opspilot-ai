@@ -4,6 +4,22 @@
 
 Install the development dependencies and run `python -m pytest -q` from the repository root. Tests require no key and make no Gemini calls. `tests/test_app.py` uses Streamlit's AppTest to operate all three demo scenarios and verify reruns do not repeat investigations.
 
+## Parser regression verification — 2026-10-28
+
+The existing suite passed with **241 passed in 6.06s**. Synthetic nginx, Java and JSON-line fixtures reproduced incorrect access-log metadata, split Java cause chains, JSON message text overriding explicit metadata, and JSON-lines rejection in `.json` files. The first new test run had **26 failed, 11 passed** before parser changes.
+
+`tests/test_parser_formats.py` adds 42 regression/safety cases in total. They exercise nginx common/combined timestamps and status-derived severity, correct error counts/time buckets, Java cause/suppressed/frame grouping, complete search citations, explicit JSON metadata precedence and missing/invalid fields, JSON-lines validation, physical line preservation, redaction, masked-private-key metadata suppression, and existing source/event limits. All inputs and credentials are synthetic. No existing tests were removed.
+
+After final diff review, `.venv/bin/python -m pytest -q` completed on Linux/Python 3.12 with **283 passed in 4.71s**, including the existing three Offline Demo scenarios, Streamlit AppTest flows, privacy/adversarial tests and bounded execution checks. `git diff --check` passed. No real Gemini request or Windows execution was performed.
+
+Supported formats, metadata precedence and remaining parser limitations are documented in [README](../README.md#limitations).
+
+## Unresolved Live Gemini HTTP 400
+
+**Status: unresolved; live generation and a complete live investigation remain unverified.** User-reported failures include an initial text-only request and an SDK-independent generation POST returning HTML HTTP 400. The cause and origin of that response have not been established.
+
+Parser improvements and passing mocked tests do not resolve this issue. Gemini integration code is unchanged. A real generation request must succeed before claiming live connectivity; the synthetic smoke test below must also verify model-selected tools and a validated report before claiming a complete live investigation works. Record only safe outcomes, never credentials or raw provider errors.
+
 ## Synthetic cases
 
 | Case | Deterministic expected result | Hypothesis and limits |
