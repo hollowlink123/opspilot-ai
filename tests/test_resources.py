@@ -131,3 +131,50 @@ def test_backend_notices_do_not_silently_drop_model_limitations():
 def test_resource_settings_have_hard_bounds(kwargs):
     with pytest.raises(ValidationError):
         Settings(**kwargs)
+
+
+@pytest.mark.parametrize('phase', ['tool', 'report'])
+@pytest.mark.parametrize('late', [False, True])
+@pytest.mark.parametrize('finish_reason', ['CONTINUATION', None])
+def test_sdk_continuation_cannot_issue_hidden_requests(monkeypatch, phase, late, finish_reason):
+    """Exercise SDK continuation handling below generate_content, not a fake model method."""
+    import json
+    from types import SimpleNamespace
+    from google.genai import models
+    import opspilot.agent as agent
+
+    clock = [0]
+    monkeypatch.setattr(agent, 'monotonic', lambda: clock[0])
+    budget = 1 if phase == 'tool' else 2
+
+    class Transport:
+        vertexai = False
+
+        def __init__(self):
+            self.starts = []
+
+        def request(self, method, path, body, http_options):
+            self.starts.append(clock[0])
+            candidate = {'content': {'role': 'model', 'parts': [{'text': 'Ready'}]},
+                         'finishReason': 'STOP'}
+            if len(self.starts) == budget:
+                if late:
+                    clock[0] = 11
+                candidate = {'content': {'role': 'model', 'parts': [
+                    {'functionCall': {'name': 'count_errors', 'args': {}, 'id': 'synthetic'}}]},
+                    'finishReason': finish_reason, 'continuationToken': 'c3ludGhldGlj'}
+            return types.HttpResponse(headers={}, body=json.dumps({'candidates': [candidate]}))
+
+        def _verify_response(self, response):
+            pass
+
+    transport = Transport()
+    client = SimpleNamespace(models=models.Models(transport))
+    result = investigate(load_sample('database_failure'),
+        Settings(model='mock', max_api_requests=budget, max_investigation_seconds=10), client)
+
+    assert len(transport.starts) == budget  # No SDK resumption even with a valid continuation token.
+    assert all(start < 10 for start in transport.starts)
+    expected = 'request/investigation_timeout' if late else 'response/blocked_or_incomplete_response'
+    assert f'{phase}_{expected}' in result.error
+    assert result.report is None and not result.traces

@@ -38,6 +38,9 @@ def usable_content(response) -> types.Content:
         raise WorkflowFailure('empty_response')
     candidate = response.candidates[0]
     reason = candidate.finish_reason
+    if reason is None and candidate.continuation_token:
+        # The SDK treats this checkpoint as resumable, not a completed model turn.
+        raise WorkflowFailure('blocked_or_incomplete_response')
     if reason == types.FinishReason.MAX_TOKENS:
         raise WorkflowFailure('output_limit')
     if reason == types.FinishReason.MALFORMED_FUNCTION_CALL:
@@ -156,7 +159,10 @@ def _run(context: Context, settings: Settings, client, result: Investigation,
             remaining = check_deadline()
             if request_count >= settings.max_api_requests:
                 raise WorkflowFailure('api_request_limit')
-            attempt_config = request_config.model_copy(update={'http_options': types.HttpOptions(
+            # SDK generation continuation is separate from retries and tool execution.
+            # Keep every HTTP request under this loop's budget and deadline checks.
+            attempt_config = request_config.model_copy(update={'automatic_continuation': False,
+                'http_options': types.HttpOptions(
                 timeout=max(1, int(min(settings.timeout_seconds, remaining) * 1000)),
                 # Application retries share the investigation budget; no hidden SDK retries.
                 retry_options=types.HttpRetryOptions(attempts=1))})

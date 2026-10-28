@@ -15,11 +15,12 @@ OpsPilot AI is a local, single-user incident investigation application. It bring
 
 Use Python 3.11 or newer and run from the repository root. Editable installation is required: sample datasets are read from this checkout.
 
-Windows PowerShell:
+Windows PowerShell (locked dependencies; Python 3.12):
 
 ```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.lock
+.\.venv\Scripts\python.exe -m pip install --no-deps -e .
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
@@ -31,7 +32,7 @@ python3 -m venv .venv
 .venv/bin/python -m streamlit run app.py
 ```
 
-No Docker, database or model credentials are needed for the demo. For the tested dependency versions, install `requirements-dev.lock` first, then install the project with `pip install --no-deps -e .`. The lock records the Linux/Python 3.12 validation environment; platform-specific wheel availability may differ.
+No Docker, database or model credentials are needed for the demo. For the tested dependency versions, use a fresh Python 3.12 environment, install `requirements-dev.lock` first, then install the project with `pip install --no-deps -e .`. Do not reuse a Python 3.11 `.venv` for this recipe: the locked NumPy requires Python 3.12 or newer. The lock records the Linux/Python 3.12 validation environment; Windows wheel availability and execution still require local verification. Python 3.11 remains supported by the ordinary unlocked `pip install -e '.[dev]'` setup.
 
 ## Offline demo
 
@@ -67,7 +68,7 @@ Configuration:
 | `OPSPILOT_MAX_API_REQUESTS` | 7 | Total selection/report attempts, including retries; maximum 21 |
 | `OPSPILOT_MAX_INVESTIGATION_SECONDS` | 90 | Overall cooperative deadline; maximum 300 seconds |
 
-The final structured-report request is additional to the step limit but counts against the total API-request budget. Each request timeout is capped by the remaining overall deadline; late responses are rejected. The deadline does not forcibly interrupt a blocked SDK call. A failure or exhausted budget returns a clear error and any completed tool traces, not a fabricated report.
+The final structured-report request is additional to the step limit but counts against the total API-request budget. SDK automatic generation continuation is explicitly disabled for both request phases, independently of SDK retries and automatic tool execution. A response requiring continuation is rejected as incomplete; it does not trigger hidden requests. Each request timeout is capped by the remaining overall deadline; late responses are rejected. The deadline does not forcibly interrupt a blocked SDK call. A failure or exhausted budget returns a clear error and any completed tool traces, not a fabricated report.
 
 HTTP 500, 502, 503 and 504 receive at most two application retries per request, with exponential delays of 1 and 2 seconds. Both tool-selection and report requests use this policy. Every attempt consumes the same total request budget; backoff consumes the overall deadline, and no retry is scheduled when its delay would exhaust the remaining time. SDK retries remain disabled. Other failures, including 429, transport errors and invalid reports, are not retried. Persistent failures retain safe error categories; retries cannot guarantee recovery during a provider outage and may incur additional API usage within the existing budget.
 

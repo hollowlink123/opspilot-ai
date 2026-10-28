@@ -49,11 +49,15 @@ def validate_report(report: Report, context: Context, available: set[str] | None
     valid = set(evidence_catalog(context))
     if available is not None:
         valid &= available
-    for finding in report.observed_symptoms + report.hypotheses + report.contradictory_evidence:
-        if not set(finding.references) <= valid:
-            raise ReportError('Report cites nonexistent or unavailable evidence.')
-    reject_causal_certainty(report)
-    return Report.model_validate(redact_value(report.model_dump(), sensitive_values))
+    sanitized_report = Report.model_validate(redact_value(report.model_dump(), sensitive_values))
+    # Redaction must neither hide a rejected claim nor introduce a new validation
+    # failure into the report we accept and later render.
+    for candidate in (report, sanitized_report):
+        for finding in candidate.observed_symptoms + candidate.hypotheses + candidate.contradictory_evidence:
+            if not set(finding.references) <= valid:
+                raise ReportError('Report cites nonexistent or unavailable evidence.')
+        reject_causal_certainty(candidate)
+    return sanitized_report
 
 
 def plain(text: str) -> str:

@@ -81,3 +81,37 @@ def test_cautious_hypothesis_with_real_refs_remains_allowed():
     result = run_demo('database_failure')
     result.report.summary = 'Cause remains unknown; a configuration mismatch may contribute.'
     assert validate_report(result.report,load_sample('database_failure')).cause_status == 'unconfirmed'
+
+
+def test_redaction_exposed_causal_claim_is_rejected_before_acceptance():
+    from opspilot.reporting import CausalClaimError
+    report = run_demo('database_failure').report
+    report.summary = 'Confirmed marker token=' + 'CANARY' * 30 + '; possible cause remains unknown.'
+    with pytest.raises(CausalClaimError):
+        validate_report(report, load_sample('database_failure'))
+
+
+def test_redaction_cannot_hide_an_original_causal_claim():
+    from opspilot.reporting import CausalClaimError
+    report = run_demo('database_failure').report
+    report.summary = 'token="Confirmed root cause: synthetic"'
+    with pytest.raises(CausalClaimError):
+        validate_report(report, load_sample('database_failure'))
+
+
+def test_redacted_references_are_revalidated():
+    report = run_demo('database_failure').report
+    with pytest.raises(ReportError):
+        validate_report(report, load_sample('database_failure'), sensitive_values=('log:4',))
+
+
+def test_accepted_redacted_report_can_be_rendered_without_mutating_input():
+    from opspilot.models import Investigation
+    context = load_sample('database_failure')
+    report = run_demo('database_failure').report
+    report.summary = 'Cause remains unknown. token=SYNTHETIC_CANARY'
+    accepted = validate_report(report, context)
+    assert validate_report(accepted, context) == accepted
+    text = markdown_report(Investigation(mode='live', report=accepted), context)
+    assert 'SYNTHETIC_CANARY' not in text
+    assert 'SYNTHETIC_CANARY' in report.summary
