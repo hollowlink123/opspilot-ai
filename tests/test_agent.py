@@ -37,7 +37,7 @@ def test_protocol_and_report():
     assert result.report
     assert result.traces[0].name == 'get_recent_deployments'
     turn = client.requests[1]['contents'][-1]
-    assert turn.role == 'tool'
+    assert turn.role == 'user'
     assert turn.parts[0].function_response.id == 'call-1'
     assert client.requests[-1]['config'].response_json_schema
     assert client.requests[0]['config'].automatic_function_calling.disable

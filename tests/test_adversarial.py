@@ -89,7 +89,10 @@ def test_injection_in_operational_tool_result_cannot_register_tools():
     assert 'FAKE SYSTEM' in result.traces[0].result.text
     assert result.traces[1].error and result.traces[1].name == 'unknown_tool'
     assert result.report is None
-    assert client.requests[1]['contents'][-1].role == 'tool'
+    turn = client.requests[1]['contents'][-1]
+    assert turn.role == 'user'
+    assert turn.parts[0].function_response.name == 'get_recent_deployments'
+    assert turn.parts[0].text is None  # Untrusted results stay structured, not instructions.
 
 
 @pytest.mark.parametrize('name,args', [
