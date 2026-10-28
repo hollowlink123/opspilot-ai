@@ -7,7 +7,7 @@ from opspilot.agent import investigate
 from opspilot.config import Settings
 from opspilot.demo import run_demo
 from opspilot.log_parser import InputError, parse_logs, sanitize_context
-from opspilot.reporting import markdown_report
+from opspilot.reporting import ReportError, markdown_report
 from opspilot.samples import SCENARIOS, load_sample
 
 st.set_page_config(page_title='OpsPilot AI', page_icon='🔎', layout='wide')
@@ -23,7 +23,7 @@ except ValidationError:
 mode = st.radio('Investigation mode', ['Offline demo', 'Live Gemini'], horizontal=True)
 scenario = st.selectbox('Sample incident', SCENARIOS, format_func=lambda s: s.replace('_', ' ').title())
 upload = st.file_uploader('Upload UTF-8 logs for live investigation', type=['log','txt','json'],
-                          disabled=mode == 'Offline demo', max_upload_size=max(1, settings.max_upload_bytes // 1048576))
+                          disabled=mode == 'Offline demo', max_upload_size=(settings.max_upload_bytes + 1048575) // 1048576)
 st.warning('Redaction is best effort. Review the redacted preview before sending any logs to Gemini.')
 context = None
 upload_bytes = upload.getvalue() if upload is not None else None
@@ -73,10 +73,17 @@ if context:
         if result.error:
             st.error(result.error)
         if result.report:
-            markdown = markdown_report(result, context)
-            st.markdown(markdown, unsafe_allow_html=False)
-            st.download_button('Download Markdown report', markdown,
-                               file_name='opspilot-report.md', mime='text/markdown')
+            try:
+                markdown = markdown_report(result, context)
+            except (ReportError, ValidationError):
+                # Never display validation inputs or exception text. Preserve tool traces.
+                result.report = None
+                result.error = 'Report validation failed during rendering. No verified report is available.'
+                st.error(result.error)
+            else:
+                st.markdown(markdown, unsafe_allow_html=False)
+                st.download_button('Download Markdown report', markdown,
+                                   file_name='opspilot-report.md', mime='text/markdown')
         st.subheader('Tool execution history')
         for i, trace in enumerate(result.traces, 1):
             with st.expander(f'{i}. {trace.name} — {trace.duration_ms:.1f} ms'):

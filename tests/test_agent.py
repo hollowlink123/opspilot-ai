@@ -272,3 +272,15 @@ def test_causal_claim_failure_has_safe_category():
     assert 'unsupported_causal_claim' in result.error
     assert 'SYNTHETIC_PRIVATE' not in result.error
     assert result.report is None
+
+
+def test_redaction_exposed_causal_claim_fails_in_agent(caplog):
+    report = run_demo(SCENARIOS[0]).report
+    report.hypotheses = []
+    report.summary = 'Confirmed marker token=' + 'CANARY' * 30 + '; possible cause remains unknown.'
+    client = FakeClient([response([types.Part(text='Ready')]),
+                         response([types.Part(text=report.model_dump_json())])])
+    result = investigate(load_sample(SCENARIOS[0]), Settings(model='mock'), client)
+    assert result.report is None
+    assert 'evidence_validation/unsupported_causal_claim' in result.error
+    assert 'CANARY' not in result.error + caplog.text
