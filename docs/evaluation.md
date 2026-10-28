@@ -153,6 +153,24 @@ Use only a local synthetic UTF-8 `.log` file, an authorized account and a model 
 
 One successful run is limited evidence, not a measured prompt-injection success rate. A live test of malicious *tool-result* text and multiple runs/models remain separate unverified evaluations; the automated test covers the deterministic backend response to such text. Stop live validation on any leakage or unauthorized behavior and retain only a sanitized reproducer.
 
+## Gemini function-call continuation verification
+
+The investigation used `Content(role='tool')` after executing Python tools. This conflicts with the Gemini `Content.role` contract (`user` or `model`). The installed Google Gen AI SDK 2.33.0 accepts that string locally and serializes it unchanged, so constructing the SDK object successfully does not establish API compatibility. The smallest fix returns the collected function responses in one `user` turn immediately after the unchanged model turn. Empty deployment/incident results remain valid structured results; they are not omitted.
+
+Official sources inspected on 2026-10-28:
+
+- [Gemini API Content, FunctionCall and FunctionResponse definitions](https://github.com/googleapis/googleapis/blob/master/google/ai/generativelanguage/v1beta/content.proto): `Content.role` specifies `user`/`model`; a response matches the call's ID when supplied. Thought signatures are opaque bytes for subsequent requests. A separate Tool comment mentions `function`, which is inconsistent with the explicit Content field contract.
+- [Current Python SDK manual function-calling example](https://github.com/googleapis/python-genai/blob/main/README.md#manually-declare-and-invoke-a-function): the example uses `tool` and omits a call ID. This example alone is insufficient evidence for the correct continuation shape.
+- [Current Python SDK implementation](https://github.com/googleapis/python-genai/blob/main/google/genai/models.py): its own automatic function-calling loop appends the complete model content followed by one `user` content containing all function responses. Its Developer API converter passes explicit roles through unchanged. The installed 2.33.0 implementation agrees on these behaviors.
+
+The hosted `ai.google.dev` guide/reference pages could not be retrieved from this environment; the official API definitions and SDK README/source above were fetched directly from Google's repositories. This comparison concerns `models.generate_content`, not the separate Interactions or Live APIs. OpsPilot keeps its existing matching IDs rather than dropping them to copy the abbreviated README example, and preserves signatures on their original model parts.
+
+`tests/test_gemini_protocol.py` exercises the real installed SDK's request conversion and response parsing with an in-memory HTTP boundary and synthetic data. The boundary enforces the documented roles; it is not a real Gemini server. The five regression cases failed against the old role and pass with `user`. They cover three counted errors plus empty operational records, parallel/sequential calls, present/absent IDs, duplicate tool names, opaque signature bytes (including SDK base64 alphabet normalization), non-call model parts, safe invalid/unauthorized-tool responses, retained history through structured reporting, and report-schema validation. No real client, credentials or network are used.
+
+Full-suite verification on 2026-10-28: `.venv/bin/python -m pytest -q` completed with **219 passed in 3.52s**. `git diff --check` passed; `AGENTS.md` is unchanged. Existing role assertions were updated, including the adversarial assertion that untrusted tool results remain structured function responses.
+
+The invalid role is a demonstrated local protocol defect and a plausible explanation for a post-tool `tool_request/api_bad_request`; the user's exact provider rejection remains unconfirmed. A local live check must still verify that the selected model accepts the continuation and completes the structured-report request. Use the built-in synthetic scenario and, if needed, a synthetic upload without operational records. Record only model/SDK versions, executed tool names, success/failure and the safe stage/category. Do not print keys, request bodies, source logs, signatures or raw provider errors. A successful mock is not proof of live acceptance or model behavior.
+
 ## Medium-severity follow-up verification
 
 The focused follow-up adds consent invalidation, source/event/report/result caps, a total API-request budget, cooperative deadline checks, conservative causal-certainty rejection with fixed unconfirmed status, and sanitation at direct-input/tool/export boundaries. It preserves the declared four tools, strict arguments, protocol response IDs/signatures and unavailable-source citation rejection.

@@ -220,7 +220,9 @@ def _run(context: Context, settings: Settings, client, result: Investigation,
                 available.update(trace.result.references)
             parts.append(types.Part(function_response=types.FunctionResponse(
                 name=call.name or 'unknown', id=call.id, response=payload)))
-        contents.append(types.Content(role='tool', parts=parts))
+        # Gemini generateContent uses user/model roles. Match the SDK's own
+        # function-calling loop: return all responses together as a user turn.
+        contents.append(types.Content(role='user', parts=parts))
     else:
         result.error = 'Investigation step limit reached; no complete report was generated.'
         return result
