@@ -1,7 +1,12 @@
 """Validated configuration; credentials are never included in representations."""
 import os
+from pathlib import Path
 
+from dotenv import dotenv_values
 from pydantic import BaseModel, Field, SecretStr
+
+
+ENV_FILE = Path(__file__).resolve().parents[2] / '.env'
 
 
 class Settings(BaseModel):
@@ -18,9 +23,11 @@ class Settings(BaseModel):
 
     @classmethod
     def from_env(cls) -> "Settings":
-        values = {name: os.environ[f"OPSPILOT_{name.upper()}"]
+        # Read only this checkout's .env; explicit process settings always win.
+        environment = {**dotenv_values(ENV_FILE, interpolate=False, encoding='utf-8-sig'), **os.environ}
+        values = {name: environment[f"OPSPILOT_{name.upper()}"]
                   for name in cls.model_fields
-                  if f"OPSPILOT_{name.upper()}" in os.environ}
-        values.update(api_key=os.getenv("GEMINI_API_KEY") or None,
-                      model=os.getenv("GEMINI_MODEL", ""))
+                  if f"OPSPILOT_{name.upper()}" in environment}
+        values.update(api_key=environment.get("GEMINI_API_KEY") or None,
+                      model=environment.get("GEMINI_MODEL") or "")
         return cls(**values)
