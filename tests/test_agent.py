@@ -1,9 +1,11 @@
+import json
 import pytest
 import httpx
 from google.genai import types
 from opspilot.agent import investigate, tool_declarations
 from opspilot.config import Settings
 from opspilot.demo import run_demo
+from opspilot.models import Report
 from opspilot.samples import load_sample, SCENARIOS
 
 
@@ -39,9 +41,31 @@ def test_protocol_and_report():
     turn = client.requests[1]['contents'][-1]
     assert turn.role == 'user'
     assert turn.parts[0].function_response.id == 'call-1'
-    assert client.requests[-1]['config'].response_json_schema
+    report_request = client.requests[-1]
+    assert report_request['config'].response_mime_type == 'application/json'
+    assert report_request['config'].response_schema is None
+    assert report_request['config'].response_json_schema is None
+    assert json.dumps(Report.model_json_schema(), separators=(',', ':')) in \
+        report_request['contents'][-1].parts[0].text
     assert client.requests[0]['config'].automatic_function_calling.disable
     assert len(tool_declarations()) == 4
+
+
+def test_report_request_rejects_invalid_report_without_provider_schema():
+    client = FakeClient([
+        response([types.Part(text='Ready')]),
+        response([types.Part(text='{"cause_status":"confirmed"}')]),
+    ])
+
+    result = investigate(load_sample('database_failure'), Settings(model='test-model'), client)
+
+    report_request = client.requests[-1]
+    assert report_request['config'].response_mime_type == 'application/json'
+    assert report_request['config'].response_schema is None
+    assert report_request['config'].response_json_schema is None
+    assert 'matching this schema' in report_request['contents'][-1].parts[0].text
+    assert result.report is None
+    assert 'report_schema/schema_validation' in result.error
 
 
 @pytest.mark.parametrize('failure', [TimeoutError('private'), RuntimeError('private')])

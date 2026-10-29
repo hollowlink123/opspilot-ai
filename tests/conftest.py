@@ -11,6 +11,13 @@ def offline_test_boundary(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError('Live network or Gemini client forbidden in automated tests')
 
+    original_connect = socket.socket.connect
+
+    def loopback_connect(sock, address):
+        if isinstance(address, tuple) and address[0] in {'127.0.0.1', '::1'}:
+            return original_connect(sock, address)
+        forbidden()
+
     monkeypatch.delenv('GEMINI_API_KEY', raising=False)
     monkeypatch.delenv('GEMINI_MODEL', raising=False)
     for name in Settings.model_fields:
@@ -18,6 +25,6 @@ def offline_test_boundary(monkeypatch):
     monkeypatch.setattr(genai, 'Client', forbidden)
     monkeypatch.setattr(socket, 'create_connection', forbidden)
     monkeypatch.setattr(socket, 'getaddrinfo', forbidden)
-    monkeypatch.setattr(socket.socket, 'connect', forbidden)
+    monkeypatch.setattr(socket.socket, 'connect', loopback_connect)
     monkeypatch.setattr(socket.socket, 'connect_ex', forbidden)
     monkeypatch.setattr(socket.socket, 'sendto', forbidden)

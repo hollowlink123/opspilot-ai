@@ -16,9 +16,9 @@ Supported formats, metadata precedence and remaining parser limitations are docu
 
 ## Unresolved Live Gemini HTTP 400
 
-**Status: unresolved; live generation and a complete live investigation remain unverified.** User-reported failures include an initial text-only request and an SDK-independent generation POST returning HTML HTTP 400. The cause and origin of that response have not been established.
+**Historical initial-request cause: unresolved.** User-reported failures included an initial text-only request and an SDK-independent generation POST returning HTML HTTP 400. The cause and origin of that response have not been established. A later Windows investigation completed for Database Failure with `gemini-3.5-flash-lite`; see [report request verification](#report-request-compatibility-verification).
 
-Parser improvements and passing mocked tests do not resolve this issue. Gemini integration code is unchanged. A real generation request must succeed before claiming live connectivity; the synthetic smoke test below must also verify model-selected tools and a validated report before claiming a complete live investigation works. Record only safe outcomes, never credentials or raw provider errors.
+Parser improvements and passing mocked tests do not explain the historical failure. The later report-request workaround addresses a separately reproduced schema rejection, not the earlier HTML response. Live success is limited to the reported model and synthetic scenario. Record only safe outcomes, never credentials or raw provider errors.
 
 ## Synthetic cases
 
@@ -58,12 +58,12 @@ On 2026-10-27, Linux with Python 3.12: `python -m pytest -q` completed with **49
 
 ## Safe diagnosis of live Gemini failures
 
-A successful basic Gemini request checks connectivity, but does not verify function declarations, multi-turn function responses, or structured JSON support for the chosen model. The agent performs tool-selection requests followed by a separate structured-report request. Its errors now identify a fixed `stage/category` in the UI and the terminal running Streamlit. These diagnostics contain no raw exception messages, request bodies, API keys, logs, model output or tracebacks.
+A successful basic Gemini request checks connectivity, but does not verify function declarations or multi-turn function responses. The agent performs tool-selection requests followed by a separate JSON-mode report request; the report schema is supplied in the prompt and enforced locally by Pydantic. Its errors identify a fixed `stage/category` in the UI and the terminal running Streamlit. These diagnostics contain no raw exception messages, request bodies, API keys, logs, model output or tracebacks.
 
 | Category | Interpretation and next check |
 |---|---|
 | `sdk_or_protocol_compatibility` | A TypeError/AttributeError occurred; compare installed SDK versions with the repository requirements. This category is a clue, not proof of an SDK defect. |
-| `api_bad_request` | Gemini rejected the request. At `tool_request`, check model support for tools and function schemas/protocol; at `report_request`, check JSON schema/model support and retained tool history compatibility. The API message is intentionally withheld. |
+| `api_bad_request` | Gemini rejected the request. At `tool_request`, check model support for tools and function schemas/protocol; at `report_request`, check JSON-mode support and retained tool history compatibility. The API message is intentionally withheld. |
 | `api_authentication`, `api_permission`, `api_model_or_endpoint_not_found` | Check local credential/account permissions and the configured model. Do not share the key. |
 | `api_rate_limit`, `api_server_error`, `api_unavailable`, `api_timeout` | Check quota or provider availability; do not bypass the application's execution bounds. |
 | `request_timeout`, `network_transport` | Check network/proxy access and the configured per-request timeout. |
@@ -79,7 +79,7 @@ A successful basic Gemini request checks connectivity, but does not verify funct
 
 Unknown tools and invalid arguments still produce safe tool-error responses so Gemini may recover within the existing limits. Missing function names are rejected. Client setup errors are caught; cleanup errors emit only a fixed warning and cannot mask the original outcome.
 
-Tool-selection and structured-report requests retry HTTP 500, 502, 503 and 504 at most twice, after 1 and 2 seconds. Every attempt counts against `OPSPILOT_MAX_API_REQUESTS`; delays and attempts share `OPSPILOT_MAX_INVESTIGATION_SECONDS`. Insufficient time for the next delay yields `investigation_timeout`; an exhausted request budget yields `api_request_limit`. After three failed attempts with time remaining, the last safe API category is retained (for example, `tool_request/api_unavailable`). Other status codes, transport errors, unusable responses and invalid reports are not retried. Retry diagnostics contain only stage/category, retry number and delay; provider messages remain withheld.
+Tool-selection and report requests retry HTTP 500, 502, 503 and 504 at most twice, after 1 and 2 seconds. Every attempt counts against `OPSPILOT_MAX_API_REQUESTS`; delays and attempts share `OPSPILOT_MAX_INVESTIGATION_SECONDS`. Insufficient time for the next delay yields `investigation_timeout`; an exhausted request budget yields `api_request_limit`. After three failed attempts with time remaining, the last safe API category is retained (for example, `tool_request/api_unavailable`). Other status codes, transport errors, unusable responses and invalid reports are not retried. Retry diagnostics contain only stage/category, retry number and delay; provider messages remain withheld.
 
 `tests/test_retries.py` uses SDK-shaped failures and a fake clock to check recovery in both phases, exponential backoff, retry exhaustion, shared request budgets, shrinking timeouts, deadline exhaustion/oversleep/late responses, non-retryable failures, secret-safe diagnostics, preserved signed parallel tool history without duplicate executions, and evidence rejection after recovery. These mocks do not establish real Gemini availability, error timing, billing, or recovery rates. For local verification, run the built-in synthetic Database Failure scenario once in Live Gemini mode and record only the model ID, SDK version and safe stage/category/retry diagnostics. Do not enable HTTP body or credential logging. A continuing 503 after bounded retries may still reflect a provider outage; changing models or adding retries cannot guarantee success.
 
@@ -185,7 +185,7 @@ The hosted `ai.google.dev` guide/reference pages could not be retrieved from thi
 
 Full-suite verification on 2026-10-28: `.venv/bin/python -m pytest -q` completed with **219 passed in 3.52s**. `git diff --check` passed; `AGENTS.md` is unchanged. Existing role assertions were updated, including the adversarial assertion that untrusted tool results remain structured function responses.
 
-The invalid role is a demonstrated local protocol defect and a plausible explanation for a post-tool `tool_request/api_bad_request`; the user's exact provider rejection remains unconfirmed. A local live check must still verify that the selected model accepts the continuation and completes the structured-report request. Use the built-in synthetic scenario and, if needed, a synthetic upload without operational records. Record only model/SDK versions, executed tool names, success/failure and the safe stage/category. Do not print keys, request bodies, source logs, signatures or raw provider errors. A successful mock is not proof of live acceptance or model behavior.
+At the time of this 2026-10-28 protocol verification, the selected model's live acceptance remained unconfirmed. Subsequent isolated report-request and Live Streamlit verification are recorded below.
 
 ## Confirmed reliability fixes: verification
 
@@ -196,7 +196,7 @@ On 2026-10-28, the complete offline suite completed with **241 passed in 4.73s**
 - `test_app.py` verifies that report/schema errors produce only a fixed UI error, clear the unusable report, omit the download and retain completed tool traces across reruns. Upload limits round up for the whole-MiB widget while the backend still rejects files above the exact byte cap. Synthetic 1.2 MB input is accepted under a 1.5 MiB setting, and input one byte over the configured limit is rejected.
 - `test_setup_docs.py` checks the documented Windows locked-install recipe selects Python 3.12 or newer, meets the installed NumPy Python requirement, and installs the lock before the editable project without dependency resolution. It does not execute PowerShell or install Windows wheels.
 
-These fixes do not identify or resolve the unverified live Gemini HTTP 400. No function-response ID/name/role or thought-signature changes were made. Live API validation and Windows/browser behavior remain pending. Disabling continuation deliberately rejects incomplete generations rather than spending uncounted requests; deadlines remain cooperative, and causal-language/redaction checks retain their documented limitations. `AGENTS.md` is unchanged.
+At the time of this 2026-10-28 validation, live API and Windows/browser behavior remained pending. Later report-request and Windows verification are recorded below. No function-response ID/name/role or thought-signature changes were made. Disabling continuation deliberately rejects incomplete generations rather than spending uncounted requests; deadlines remain cooperative, and causal-language/redaction checks retain their documented limitations. `AGENTS.md` is unchanged.
 
 ## Medium-severity follow-up verification
 
@@ -206,4 +206,14 @@ Full suites were run after each change area. The final result is **183 passed**,
 
 Current default total budget is seven API requests (including final reporting) and 90 seconds. Configure `OPSPILOT_MAX_API_REQUESTS` and `OPSPILOT_MAX_INVESTIGATION_SECONDS` within their hard maxima of 21 and 300. Each request timeout is capped by the remaining monotonic deadline, but a blocked dependency call is not forcibly interrupted. Tests verify passed timeout options and rejection of late replies with fake clocks, not real provider cancellation.
 
-For a follow-up live smoke test, use the existing synthetic fixture only. Also change the selected input after checking consent: the checkbox must clear and Start must disable until fresh approval. Confirm the report's unconfirmed status and uncertainty labels, or a safe `unsupported_causal_claim` error if explicit confirmation is attempted. A successful run remains evidence for that one model/version/input only. Windows upload behavior, real API schema acceptance/latency and semantic resistance to novel injection phrasing remain unverified.
+For a follow-up live smoke test, use the existing synthetic fixture only. Also change the selected input after checking consent: the checkbox must clear and Start must disable until fresh approval. Confirm the report's unconfirmed status and uncertainty labels, or a safe `unsupported_causal_claim` error if explicit confirmation is attempted. A successful run remains evidence for that one model/version/input only. Cross-model JSON-mode behavior, provider-enforced schema acceptance/latency and semantic resistance to novel injection phrasing remain unverified.
+
+## Report request compatibility: verification
+
+The user-provided Windows handoff dated 2026-10-29 reports that an isolated text-only request to `gemini-3.5-flash-lite` using JSON MIME output and no provider schema returned a response accepted by `Report.model_validate_json()`. The same model returned HTTP 400 when the Pydantic schema was supplied as `response_json_schema`; minimal schema succeeded. Changing schema keywords in memory did not resolve that rejection. Google's exact validation reason remains unknown. The final-report request now includes the unchanged Pydantic-generated schema in the prompt and omits both provider schema parameters. Strict Pydantic validation, causal checks, evidence validation, redaction and request limits remain in force. A focused regression checks request configuration and rejection of an invalid report. Prompt-described formatting does not guarantee schema compliance; invalid output still fails closed.
+
+That handoff reports that the built-in Database Failure investigation completed in Streamlit Live Gemini mode: all four read-only tools executed, the report passed application validation and rendered with cited evidence and the tool history. The complete local Windows test suite passed (**242 passed**). Both results used a separate pre-existing dotenv modification in `config.py`, which is excluded from this change; the repository expects settings supplied through the process environment as documented in README. The local checkout did not yet contain the 42 parser-format tests later merged into main.
+
+The offline test boundary permits `socket.connect` to literal `127.0.0.1` and `::1` for Windows Streamlit AppTest's socketpair fallback. This permits any port on those loopback addresses, not only the socketpair port. Other hosts, Gemini client construction, DNS resolution, `create_connection`, `connect_ex` and `sendto` remain blocked. No credentials, diagnostic logs or local dotenv changes are included.
+
+Cloud verification reproduced **242 passed in 4.80s** with the seven-file handoff applied to `93cecd1`, excluding the local `config.py` modification. After integrating with main at `1dc1b0b`, including its parser tests, `PYTHONPATH=src /workspace/opspilot-ai/.venv/bin/python -m pytest -q` completed with **284 passed in 4.92s** on Linux. `git diff HEAD --check` passed. These are offline tests; the Windows live run was not repeated in the cloud. `AGENTS.md`, the parser implementation and `config.py` are unchanged relative to current main.

@@ -232,12 +232,14 @@ def _run(context: Context, settings: Settings, client, result: Investigation,
     else:
         result.error = 'Investigation step limit reached; no complete report was generated.'
         return result
+    report_schema = json.dumps(Report.model_json_schema(), separators=(',', ':'))
     contents.append(types.Content(role='user', parts=[types.Part.from_text(
-        text='Return the final report. Cite only available source references. All possible causes are hypotheses.')]))
+        text=('Return the final report as JSON matching this schema. Cite only available '
+              'source references. All possible causes are hypotheses. Do not include '
+              'Markdown or additional fields.\n' + report_schema))]))
     state['stage'] = 'report_request'
     response = request(types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION,
-        response_mime_type='application/json', response_json_schema=Report.model_json_schema(),
-        max_output_tokens=8192))
+        response_mime_type='application/json', max_output_tokens=8192))
     state['stage'] = 'report_response'
     content = usable_content(response)
     if any(part.function_call for part in content.parts):

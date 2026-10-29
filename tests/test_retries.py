@@ -54,7 +54,8 @@ def test_transient_api_errors_recover(code, stage, clock, caplog):
     assert attempts[0]['contents'] == attempts[1]['contents'] == attempts[2]['contents']
     assert [r['config'].http_options.timeout for r in attempts] == [10000, 9000, 7000]
     assert all(r['config'].http_options.retry_options.attempts == 1 for r in client.requests)
-    assert client.requests[-1]['config'].response_json_schema
+    assert client.requests[-1]['config'].response_mime_type == 'application/json'
+    assert client.requests[-1]['config'].response_json_schema is None
     assert client.requests[0]['config'].automatic_function_calling.disable
     assert f'stage={stage}_request' in caplog.text
     assert 'SYNTHETIC_' not in caplog.text + result.model_dump_json()
