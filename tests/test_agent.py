@@ -6,6 +6,7 @@ from opspilot.agent import investigate, tool_declarations
 from opspilot.config import Settings
 from opspilot.demo import run_demo
 from opspilot.models import Report
+from opspilot.log_parser import parse_logs
 from opspilot.samples import load_sample, SCENARIOS
 
 
@@ -66,6 +67,29 @@ def test_report_request_rejects_invalid_report_without_provider_schema():
     assert 'matching this schema' in report_request['contents'][-1].parts[0].text
     assert result.report is None
     assert 'report_schema/schema_validation' in result.error
+
+
+def test_model_selected_request_id_filter_returns_cited_report():
+    source = '\n'.join(json.dumps({'request_id': request_id, 'level': 'ERROR',
+                                   'message': 'Synthetic timeout'})
+                       for request_id in ['req-170', 'REQ-17', 'req-17'])
+    context = parse_logs(source.encode(), 'a.json')
+    report = Report(title='Request investigation', summary='A timeout was recorded.',
+                    observed_symptoms=[{'statement': 'Request req-17 timed out.', 'references': ['log:3']}],
+                    hypotheses=[], contradictory_evidence=[], missing_information=['Cause is unknown.'],
+                    next_steps=['Review the database logs.'], limitations=[])
+    client = FakeClient([call('search_logs', {'request_id': 'req-17'}),
+                         response([types.Part(text='Ready')]),
+                         response([types.Part(text=report.model_dump_json())])])
+    result = investigate(context, Settings(model='mock'), client)
+    assert result.error is None
+    assert result.report.observed_symptoms[0].references == ['log:3']
+    assert result.traces[0].result.references == ['log:3']
+    declaration = next(tool for tool in tool_declarations() if tool.name == 'search_logs')
+    assert 'request_id' in declaration.parameters_json_schema['properties']
+    turn = client.requests[1]['contents'][-1]
+    assert turn.role == 'user'
+    assert turn.parts[0].function_response.id == 'call-1'
 
 
 @pytest.mark.parametrize('failure', [TimeoutError('private'), RuntimeError('private')])

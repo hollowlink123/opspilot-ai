@@ -10,7 +10,7 @@ from .deployments import get_recent_deployments
 from .incidents import find_similar_incidents
 
 REGISTRY = {
-    'search_logs': (SearchArgs, search_logs, 'Search redacted uploaded logs; references are physical line numbers.'),
+    'search_logs': (SearchArgs, search_logs, 'Search redacted logs by keyword and optional exact case-sensitive request_id; references are physical line numbers.'),
     'count_errors': (CountArgs, count_errors, 'Count ERROR/CRITICAL events deterministically.'),
     'get_recent_deployments': (EmptyArgs, get_recent_deployments, 'Read synthetic sample deployment history, not production records.'),
     'find_similar_incidents': (IncidentArgs, find_similar_incidents, 'Search synthetic historical incidents by keyword.'),

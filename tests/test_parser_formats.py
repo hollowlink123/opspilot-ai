@@ -4,7 +4,7 @@ import json
 import pytest
 
 from opspilot.log_parser import InputError, parse_logs
-from opspilot.models import MAX_ENTRY_CHARS, MAX_LOG_LINES
+from opspilot.models import MAX_ENTRY_CHARS, MAX_LOG_LINES, MAX_REQUEST_ID_CHARS
 from opspilot.reporting import evidence_catalog
 from opspilot.tools import execute
 
@@ -156,6 +156,48 @@ def test_json_metadata_is_read_without_retaining_unredacted_secret_values():
     assert entry.severity == 'INFO'
     assert entry.timestamp == '2026-10-28T10:00:00+00:00'
     assert 'CANARY_FORMAT_SECRET' not in entry.message
+
+
+@pytest.mark.parametrize('request_id', ['req-17', 'REQ-17', 'x' * MAX_REQUEST_ID_CHARS])
+def test_json_request_id_preserves_exact_value_and_evidence(request_id):
+    source = json.dumps({'level': 'ERROR', 'request_id': request_id, 'message': 'Timeout'})
+    context = parse_logs(source.encode(), 'a.json')
+    assert context.logs[0].request_id == request_id
+    assert evidence_catalog(context) == {'log:1': source}
+
+
+@pytest.mark.parametrize('request_id', [None, 17, True, [], {}, '', '   ',
+                                      'x' * (MAX_REQUEST_ID_CHARS + 1), 'req\n17'])
+def test_invalid_json_request_id_is_ignored_without_losing_event(request_id):
+    context = parse_logs(json.dumps({'request_id': request_id, 'level': 'ERROR'}).encode(), 'a.json')
+    assert context.logs[0].request_id is None
+    assert context.logs[0].severity == 'ERROR'
+    assert execute(context, 'search_logs', {}).result.references == ['log:1']
+
+
+@pytest.mark.parametrize('record', [
+    {'requestId': 'req-17'}, {'context': {'request_id': 'req-17'}},
+    {'message': 'request_id=req-17'},
+])
+def test_request_id_is_not_inferred_from_alias_nested_field_or_message(record):
+    assert parse_logs(json.dumps(record).encode(), 'a.json').logs[0].request_id is None
+
+
+def test_json_request_id_survives_redaction_of_other_fields():
+    source = json.dumps({'request_id': 'req-17', 'password': 'CANARY_REQUEST_SECRET'})
+    context = parse_logs(source.encode(), 'a.json')
+    assert context.logs[0].request_id == 'req-17'
+    assert 'CANARY_REQUEST_SECRET' not in context.model_dump_json()
+
+
+def test_request_id_search_preserves_multiline_evidence_and_does_not_inherit_between_events():
+    source = (json.dumps({'level': 'ERROR', 'request_id': 'req-17', 'message': 'Failure'})
+              + '\njava.io.IOException: unavailable\n\tat app.Worker.run(Worker.java:42)\n'
+              + json.dumps({'level': 'ERROR', 'message': 'Other request without ID'}))
+    context = parse_logs(source.encode(), 'a.log')
+    assert [entry.request_id for entry in context.logs] == ['req-17', None]
+    assert execute(context, 'search_logs', {'request_id': 'req-17'}).result.references == [
+        'log:1', 'log:2', 'log:3']
 
 
 def test_masked_private_key_lines_cannot_contribute_metadata():

@@ -5,8 +5,8 @@ from google.genai import types
 from opspilot.agent import investigate
 from opspilot.config import Settings
 from opspilot.demo import run_demo
-from opspilot.log_parser import parse_logs, InputError
-from opspilot.models import Report, MAX_LOG_LINES, MAX_ENTRY_CHARS
+from opspilot.log_parser import parse_logs, sanitize_context, InputError
+from opspilot.models import Context, LogEntry, Report, MAX_LOG_LINES, MAX_ENTRY_CHARS, MAX_CONTEXT_INPUT_CHARS
 from opspilot.samples import load_sample
 from opspilot.tools import execute
 from test_agent import FakeClient, call, response
@@ -99,6 +99,14 @@ def test_direct_context_mutation_is_revalidated():
     result = investigate(context, Settings(model='mock'),client)
     assert 'input_validation/schema_validation' in result.error
     assert not client.requests
+
+
+def test_request_id_metadata_cannot_exceed_context_budget():
+    context = Context(logs=[LogEntry(line=i, end_line=i, message='x' * MAX_ENTRY_CHARS)
+                            for i in range(1, MAX_CONTEXT_INPUT_CHARS // MAX_ENTRY_CHARS + 1)])
+    context.logs[0].request_id = 'req-17'
+    with pytest.raises(ValidationError, match='Investigation source exceeds size limit'):
+        sanitize_context(context)
 
 
 def test_oversized_model_response_is_rejected():

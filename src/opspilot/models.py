@@ -7,6 +7,7 @@ MAX_LOG_LINES = 10000
 MAX_ENTRY_CHARS = 16000
 MAX_CONTEXT_INPUT_CHARS = 2000000
 MAX_TOOL_RESULT_CHARS = 16000
+MAX_REQUEST_ID_CHARS = 128
 ReportText = Annotated[str, Field(min_length=1, max_length=2000)]
 
 
@@ -18,6 +19,7 @@ class LogEntry(StrictModel):
     line: int = Field(ge=1, le=MAX_LOG_LINES)
     end_line: int = Field(ge=1, le=MAX_LOG_LINES)
     timestamp: str | None = Field(default=None, max_length=128)
+    request_id: str | None = Field(default=None, min_length=1, max_length=MAX_REQUEST_ID_CHARS)
     severity: str = Field(default="UNKNOWN", max_length=16)
     message: str = Field(max_length=MAX_ENTRY_CHARS)
 
@@ -37,7 +39,7 @@ class Context(StrictModel):
 
     @model_validator(mode='after')
     def bounded_source(self) -> "Context":
-        size = sum(len(entry.message) for entry in self.logs)
+        size = sum(len(entry.message) + len(entry.request_id or '') for entry in self.logs)
         size += sum(len(record.description) for record in self.records)
         if size > MAX_CONTEXT_INPUT_CHARS:
             raise ValueError('Investigation source exceeds size limit')
@@ -55,6 +57,8 @@ class Context(StrictModel):
 
 class SearchArgs(StrictModel):
     query: str = Field(default="", max_length=200)
+    request_id: str | None = Field(default=None, min_length=1, max_length=MAX_REQUEST_ID_CHARS,
+                                 description='Exact case-sensitive request_id; omit for keyword-only search.')
     severity: Literal["UNKNOWN", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = None
     limit: int = Field(default=20, ge=1, le=50)
 

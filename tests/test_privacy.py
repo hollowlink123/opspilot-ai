@@ -88,3 +88,40 @@ def test_direct_pem_sanitization_preserves_evidence_lines():
     assert clean.logs[0].end_line == 3
     assert set(evidence_catalog(clean)) == {'log:1','log:2','log:3'}
     assert 'CANARY_PRIVATE' not in clean.model_dump_json()
+
+
+@pytest.mark.parametrize('request_id', ['password=CANARY_REQUEST_SECRET',
+                                      'person@example.com', '[REDACTED]', 'req-[redacted_email]'])
+def test_sensitive_or_redacted_request_ids_cannot_correlate(request_id):
+    context = parse_logs(json.dumps({'level': 'ERROR', 'request_id': request_id}).encode(), 'a.json')
+    assert context.logs[0].request_id is None
+    trace = execute(context, 'search_logs', {'request_id': request_id})
+    assert trace.error is None
+    assert trace.result.references == []
+    if not request_id.lower().startswith('[redacted') and 'redacted' not in request_id:
+        assert request_id not in context.model_dump_json() + trace.model_dump_json()
+
+
+def test_configured_secret_in_request_id_is_removed_before_model_and_tools():
+    key = 'SYNTHETIC_REQUEST_CREDENTIAL'
+    context = parse_logs(json.dumps({'level': 'ERROR', 'request_id': key}).encode(), 'a.json')
+    client = FakeClient([call('search_logs', {'request_id': '[REDACTED]'}),
+                        response([types.Part(text='done')]),
+                        response([types.Part(text=report_for(context).model_dump_json())])])
+    result = investigate(context, Settings(model='mock', api_key=key), client)
+    assert result.report and not result.error
+    assert key not in str(client.requests) + result.model_dump_json()
+    assert result.traces[0].result.references == []
+    assert sanitize_context(context, (key,)).logs[0].request_id is None
+    assert context.logs[0].request_id == key  # Caller objects are not mutated.
+    trace = execute(context, 'search_logs', {'request_id': key}, sensitive_values=(key,))
+    assert trace.result.references == []
+    assert key not in trace.model_dump_json()
+
+
+def test_masked_private_key_cannot_supply_request_id():
+    source = ('-----BEGIN PRIVATE KEY-----\n{"request_id":"req-17"}\n'
+              '-----END PRIVATE KEY-----')
+    context = parse_logs(source.encode(), 'a.log')
+    assert all(entry.request_id is None for entry in context.logs)
+    assert execute(context, 'search_logs', {'request_id': 'req-17'}).result.references == []
