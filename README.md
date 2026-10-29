@@ -40,7 +40,7 @@ Choose **Offline demo**, select one of the three incidents and click **Start inv
 
 ## Live Gemini
 
-Use a Gemini API key and a model available to your account that supports function calling and structured JSON output. Model identifiers change; select one from the current [Gemini model documentation](https://ai.google.dev/gemini-api/docs/models). No model identifier is hard-coded.
+Use a Gemini API key and a model available to your account that supports function calling and JSON output. Model identifiers change; select one from the current [Gemini model documentation](https://ai.google.dev/gemini-api/docs/models). No model identifier is hard-coded.
 
 Set environment variables in the same terminal before launching Streamlit. Enter real credentials locally, never in committed files or shared transcripts. `.env.example` documents the variables; `.env` files are **not automatically loaded**.
 
@@ -59,7 +59,7 @@ Configuration:
 | Variable | Default | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` | unset | Live API credential |
-| `GEMINI_MODEL` | unset | Model ID supporting tools and structured output |
+| `GEMINI_MODEL` | unset | Model ID supporting tools and JSON output |
 | `OPSPILOT_MAX_UPLOAD_BYTES` | 1048576 | Maximum upload bytes, capped at 10 MiB |
 | `OPSPILOT_MAX_STEPS` | 6 | Maximum tool-selection model turns |
 | `OPSPILOT_MAX_TOOL_CALLS` | 12 | Maximum backend tool executions |
@@ -68,7 +68,7 @@ Configuration:
 | `OPSPILOT_MAX_API_REQUESTS` | 7 | Total selection/report attempts, including retries; maximum 21 |
 | `OPSPILOT_MAX_INVESTIGATION_SECONDS` | 90 | Overall cooperative deadline; maximum 300 seconds |
 
-The final structured-report request is additional to the step limit but counts against the total API-request budget. SDK automatic generation continuation is explicitly disabled for both request phases, independently of SDK retries and automatic tool execution. A response requiring continuation is rejected as incomplete; it does not trigger hidden requests. Each request timeout is capped by the remaining overall deadline; late responses are rejected. The deadline does not forcibly interrupt a blocked SDK call. A failure or exhausted budget returns a clear error and any completed tool traces, not a fabricated report.
+The final report request asks for JSON and includes the `Report` schema in its prompt; the returned text is strictly validated with Pydantic before evidence checks. This request is additional to the step limit but counts against the total API-request budget. SDK automatic generation continuation is explicitly disabled for both request phases, independently of SDK retries and automatic tool execution. A response requiring continuation is rejected as incomplete; it does not trigger hidden requests. Each request timeout is capped by the remaining overall deadline; late responses are rejected. The deadline does not forcibly interrupt a blocked SDK call. A failure or exhausted budget returns a clear error and any completed tool traces, not a fabricated report.
 
 HTTP 500, 502, 503 and 504 receive at most two application retries per request, with exponential delays of 1 and 2 seconds. Both tool-selection and report requests use this policy. Every attempt consumes the same total request budget; backoff consumes the overall deadline, and no retry is scheduled when its delay would exhaust the remaining time. SDK retries remain disabled. Other failures, including 429, transport errors and invalid reports, are not retried. Persistent failures retain safe error categories; retries cannot guarantee recovery during a provider outage and may incur additional API usage within the existing budget.
 
@@ -95,7 +95,7 @@ On macOS/Linux use `.venv/bin/python -m pytest -q`, or `python -m pytest -q` aft
 - Context budgets can prevent completion. Initial context includes whole entries up to a budget; tools can retrieve more. Oversized tool results are withheld from the model with an explicit error.
 - This is not a hosted multi-user service. Do not expose it publicly without a separate security design. No investigations are deliberately persisted to disk by the application.
 - Windows commands are provided, but execution was validated on Linux, not on a Windows machine. Live model compatibility and quality require a credentialed smoke test.
-- Live Gemini HTTP 400 remains unresolved, including a user-reported text-only REST failure. Parser tests and Offline Demo success do not verify live generation or a complete AI investigation. See the [live issue record](docs/evaluation.md#unresolved-live-gemini-http-400).
+- A user-reported Windows Live Gemini investigation completed for Database Failure with `gemini-3.5-flash-lite` using JSON-mode reporting. Other model/scenario combinations remain unverified, and the historical initial-request HTTP 400 cause remains unknown. See the [live issue record](docs/evaluation.md#unresolved-live-gemini-http-400) and [report verification](docs/evaluation.md#report-request-compatibility-verification).
 
 ## Verification and security review
 
