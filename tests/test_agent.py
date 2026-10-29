@@ -240,6 +240,40 @@ def test_safe_api_errors(code, category, caplog, monkeypatch):
     assert 'PRIVATE_STATUS' not in caplog.text
 
 
+@pytest.mark.parametrize('stage', ['tool_request', 'report_request'])
+def test_api_400_after_four_tools_preserves_stage_and_safe_traces(stage, caplog):
+    from google.genai.errors import APIError
+    calls = [('search_logs', {'severity': 'ERROR'}), ('count_errors', {}),
+             ('get_recent_deployments', {}), ('find_similar_incidents', {'query': 'database'})]
+    parts = [types.Part(function_call=types.FunctionCall(name=name, args=args, id=f'call-{i}'))
+             for i, (name, args) in enumerate(calls)]
+    replies = [response(parts)]
+    if stage == 'report_request':
+        replies.append(response([types.Part(text='Ready')]))
+    replies.append(APIError(400, {'error': {'message': 'SYNTHETIC_PRIVATE_PROVIDER_ERROR'}}))
+    client = FakeClient(replies)
+
+    result = investigate(load_sample('database_failure'), Settings(model='mock'), client)
+
+    assert f'[{stage}/api_bad_request]' in result.error
+    assert result.report is None
+    assert len(result.traces) == 4 and all(trace.error is None for trace in result.traces)
+    assert len(client.requests) == (2 if stage == 'tool_request' else 3)
+    assert 'SYNTHETIC_PRIVATE_PROVIDER_ERROR' not in result.model_dump_json() + caplog.text
+    continuation = client.requests[1]['contents'][-1]
+    assert continuation.role == 'user'
+    assert [part.function_response.id for part in continuation.parts] == [f'call-{i}' for i in range(4)]
+    request_config = client.requests[-1]['config']
+    assert request_config.automatic_continuation is False
+    assert request_config.response_schema is None and request_config.response_json_schema is None
+    if stage == 'report_request':
+        assert request_config.response_mime_type == 'application/json'
+        assert request_config.tools is None
+    else:
+        assert request_config.tools
+        assert request_config.response_mime_type is None
+
+
 @pytest.mark.parametrize('text,category', [('not JSON SECRET_LOG', 'invalid_json'), ('{"title":"SECRET_LOG"}', 'schema_validation')])
 def test_report_parse_categories(text, category, caplog):
     client = FakeClient([response([types.Part(text='done')]), response([types.Part(text=text)])])

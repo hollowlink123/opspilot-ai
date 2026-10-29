@@ -3,11 +3,14 @@ import socket
 
 import pytest
 from google import genai
+from opspilot import config
 from opspilot.config import Settings
 
 
 @pytest.fixture(autouse=True)
-def offline_test_boundary(monkeypatch):
+def offline_test_boundary(monkeypatch, tmp_path):
+    # Never load a developer's real .env during automated tests.
+    monkeypatch.setattr(config, 'ENV_FILE', tmp_path / '.env')
     def forbidden(*args, **kwargs):
         raise AssertionError('Live network or Gemini client forbidden in automated tests')
 
