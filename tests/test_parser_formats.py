@@ -49,6 +49,60 @@ def test_nginx_negative_timezone_offset():
     assert parse_logs(source.encode(), 'access.log').logs[0].timestamp == '2026-10-28T10:00:00-07:00'
 
 
+def test_apache_error_excerpt_preserves_events_and_citations():
+    # Synthetic reproduction of the observed layout; no LogHub records copied.
+    levels = ['notice', 'error', 'notice', 'notice', 'notice', 'notice',
+              'notice', 'notice', 'error', 'error', 'error', 'notice']
+    lines = [f'[Mon Oct 26 {"04:47:44" if i < 2 else "04:51:18"} 2026] [{level}] '
+             f'Synthetic worker event {i + 1}' for i, level in enumerate(levels)]
+    context = parse_logs('\n'.join(lines).encode(), 'apache.log')
+    assert len(context.logs) == 12
+    assert [entry.timestamp for entry in context.logs] == [
+        '2026-10-26T04:47:44'] * 2 + ['2026-10-26T04:51:18'] * 10
+    assert [entry.severity for entry in context.logs] == [
+        'INFO' if level == 'notice' else 'ERROR' for level in levels]
+    assert evidence_catalog(context) == {f'log:{i}': line for i, line in enumerate(lines, 1)}
+    assert execute(context, 'search_logs', {'severity': 'ERROR'}).result.references == [
+        'log:2', 'log:9', 'log:10', 'log:11']
+    assert json.loads(execute(context, 'count_errors', {}).result.text) == {'ERROR': 4}
+    assert json.loads(execute(context, 'count_errors', {'group_by': 'time_bucket'}).result.text) == {
+        '2026-10-26T04:47': 1, '2026-10-26T04:51': 3}
+
+
+@pytest.mark.parametrize('level,expected', [('notice', 'INFO'), ('info', 'INFO'), ('warn', 'WARNING'),
+                                         ('error', 'ERROR'), ('crit', 'CRITICAL'), ('alert', 'CRITICAL'),
+                                         ('emerg', 'CRITICAL'), ('debug', 'DEBUG'), ('other', 'UNKNOWN')])
+def test_apache_header_overrides_message_metadata(level, expected):
+    source = f'[Sun Dec  4 04:47:44 2005] [{level}] ERROR mentioned at 2020-01-01T00:00:00Z'
+    entry, = parse_logs(source.encode(), 'apache.log').logs
+    assert entry.timestamp == '2005-12-04T04:47:44'
+    assert entry.severity == expected
+    assert entry.request_id is None
+    assert entry.message == source
+
+
+@pytest.mark.parametrize('stamp', ['Mon Oct 32 04:47:44 2026', 'Mon Foo 26 04:47:44 2026',
+                                   'Mon Oct 26 25:47:44 2026', 'Mon Feb 30 04:47:44 2026'])
+def test_invalid_apache_timestamp_does_not_use_message_date(stamp):
+    entry, = parse_logs(f'[{stamp}] [notice] ERROR at 2020-01-01T00:00:00Z'.encode(), 'a.log').logs
+    assert entry.timestamp is None
+    assert entry.severity == 'INFO'
+
+
+def test_apache_parsing_preserves_redaction_and_private_key_masking():
+    source = ('[Mon Oct 26 04:47:44 2026] [error] password=SYNTHETIC_APACHE_SECRET\n'
+              '-----BEGIN PRIVATE KEY-----\n'
+              '[Mon Oct 26 05:00:00 2026] [notice] SYNTHETIC_PRIVATE_CONTENT\n'
+              '-----END PRIVATE KEY-----')
+    context = parse_logs(source.encode(), 'apache.log')
+    assert context.logs[0].timestamp == '2026-10-26T04:47:44'
+    assert context.logs[0].severity == 'ERROR'
+    assert all(entry.timestamp is None for entry in context.logs[1:])
+    assert 'SYNTHETIC_APACHE_SECRET' not in context.model_dump_json()
+    assert 'SYNTHETIC_PRIVATE_CONTENT' not in str(evidence_catalog(context))
+    assert set(evidence_catalog(context)) == {'log:1', 'log:2', 'log:3', 'log:4'}
+
+
 JAVA_TRACE = '\n'.join([
     '2026-10-28 10:00:00,123 ERROR app.Worker - Request failed',
     'java.lang.IllegalStateException: database unavailable',

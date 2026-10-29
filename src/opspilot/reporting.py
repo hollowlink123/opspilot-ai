@@ -94,5 +94,7 @@ def markdown_report(investigation: Investigation, context: Context,
     lines += [f'- {plain(ref)}: {plain(catalog[ref])}' for ref in refs]
     lines += ['', '## Diagnostic tools actually executed']
     lines += [f'- {plain(t.name)}: {"error" if t.error else "completed"}' for t in investigation.traces]
-    lines += ['', 'Reference existence does not prove that a claim is supported. Synthetic records are not production evidence.']
+    lines += ['', 'Reference existence does not prove that a claim is supported.']
+    if context.records:
+        lines.append('Synthetic records are not production evidence.')
     return '\n'.join(lines) + '\n'
