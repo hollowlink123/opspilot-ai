@@ -135,7 +135,71 @@ def test_request_id_filter_combines_with_existing_search(interleaved_requests, a
 
 
 @pytest.mark.parametrize('request_id', ['', 'x' * 129, 17, True, []])
-def test_invalid_request_id_tool_argument_is_rejected(interleaved_requests, request_id):
-    trace = execute(interleaved_requests, 'search_logs', {'request_id': request_id})
+@pytest.mark.parametrize('tool_name', ['search_logs', 'count_errors'])
+def test_invalid_request_id_tool_argument_is_rejected(interleaved_requests, request_id, tool_name):
+    trace = execute(interleaved_requests, tool_name, {'request_id': request_id})
     assert trace.error == 'Invalid tool arguments.'
     assert trace.result is None
+
+
+@pytest.fixture
+def checkout_incident():
+    # Entirely synthetic evaluation: one failed checkout amid unrelated traffic.
+    rows = [
+        ('10:00:00Z', 'edge', 'req-17', 'INFO', 'POST /checkout started'),
+        ('10:00:00Z', 'images', 'req-170', 'ERROR', 'ImageDecodeError: invalid thumbnail'),
+        ('10:00:01Z', 'checkout', 'req-17', 'INFO', 'Acquiring database connection'),
+        ('10:00:01Z', 'inventory', 'req-22', 'ERROR', 'InventoryTimeoutError: supplier timeout'),
+        ('12:00:02+02:00', 'database', 'req-17', 'ERROR', 'PoolTimeoutError: connection pool wait exceeded'),
+        ('10:00:03Z', 'checkout', 'req-17', 'ERROR', 'DatabaseUnavailableError: no connection'),
+        ('10:00:03Z', 'edge', 'REQ-17', 'ERROR', 'UpstreamTimeoutError: separate request'),
+        ('10:00:04Z', 'support', 'req-99', 'INFO', 'Support note mentions req-17'),
+        ('10:00:04Z', 'edge', 'req-17', 'ERROR', 'CheckoutRequestError: HTTP 503'),
+        ('10:00:05Z', 'database', 'health-8', 'INFO', 'SELECT 1 succeeded'),
+        ('10:01:10Z', 'worker', None, 'ERROR', 'CleanupError: scheduled task failed'),
+        ('10:01:12Z', 'checkout', 'req-18', 'INFO', 'Another checkout completed'),
+    ]
+    source = '\n'.join(json.dumps(dict(timestamp='2026-10-29T' + stamp, service=service,
+                                      request_id=request_id, level=level, message=message))
+                       for stamp, service, request_id, level, message in rows)
+    return parse_logs(source.encode(), 'checkout.json')
+
+
+@pytest.mark.parametrize('arguments,expected', [
+    ({}, {'ERROR': 7}),
+    ({'request_id': None}, {'ERROR': 7}),
+    ({'request_id': 'req-17'}, {'ERROR': 3}),
+    ({'request_id': 'req-170'}, {'ERROR': 1}),
+    ({'request_id': 'REQ-17'}, {'ERROR': 1}),
+    ({'request_id': 'absent'}, {}),
+    ({'request_id': 'req-18'}, {}),
+    ({'request_id': 'req-17', 'group_by': 'time_bucket'}, {'2026-10-29T10:00+00:00': 3}),
+    ({'request_id': 'req-17', 'group_by': 'error_type'},
+     {'PoolTimeoutError': 1, 'DatabaseUnavailableError': 1, 'CheckoutRequestError': 1}),
+])
+def test_count_errors_for_interleaved_requests(checkout_incident, arguments, expected):
+    original = checkout_incident.model_dump()
+    trace = execute(checkout_incident, 'count_errors', arguments)
+    assert trace.error is None
+    assert json.loads(trace.result.text) == expected
+    assert checkout_incident.model_dump() == original
+
+
+def test_request_error_count_includes_critical_events_and_ignores_message_mentions(checkout_incident):
+    checkout_incident.logs[4].severity = 'CRITICAL'
+    checkout_incident.logs[7].severity = 'ERROR'  # Only the message mentions req-17.
+    trace = execute(checkout_incident, 'count_errors', {'request_id': 'req-17'})
+    assert trace.error is None
+    assert json.loads(trace.result.text) == {'ERROR': 2, 'CRITICAL': 1}
+
+
+def test_count_errors_does_not_match_redacted_request_ids():
+    key = 'SYNTHETIC_COUNT_CREDENTIAL'
+    source = '\n'.join(json.dumps({'level': 'ERROR', 'request_id': value})
+                       for value in [key, '[REDACTED]', 'password=SYNTHETIC_COUNT_SECRET'])
+    context = parse_logs(source.encode(), 'redacted.json')
+    trace = execute(context, 'count_errors', {'request_id': key}, sensitive_values=(key,))
+    assert trace.error is None
+    assert json.loads(trace.result.text) == {}
+    assert key not in trace.model_dump_json()
+    assert 'SYNTHETIC_COUNT_SECRET' not in trace.model_dump_json()
