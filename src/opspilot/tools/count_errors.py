@@ -10,6 +10,8 @@ def count_errors(context: Context, args: CountArgs) -> ToolResult:
     for entry in context.logs:
         if entry.severity not in {'ERROR', 'CRITICAL'}:
             continue
+        if args.request_id is not None and entry.request_id != args.request_id:
+            continue
         if args.group_by == 'severity':
             key = entry.severity
         elif args.group_by == 'time_bucket':

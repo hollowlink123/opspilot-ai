@@ -65,6 +65,8 @@ class SearchArgs(StrictModel):
 
 class CountArgs(StrictModel):
     group_by: Literal["severity", "error_type", "time_bucket"] = "severity"
+    request_id: str | None = Field(default=None, min_length=1, max_length=MAX_REQUEST_ID_CHARS,
+                                 description='Exact case-sensitive request_id; omit to count the whole upload.')
 
 
 class IncidentArgs(StrictModel):
