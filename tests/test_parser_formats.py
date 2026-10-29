@@ -34,7 +34,7 @@ def test_nginx_status_counts_and_time_buckets():
     context = parse_logs(source.encode(), 'access.log')
     assert json.loads(execute(context, 'count_errors', {}).result.text) == {'ERROR': 2}
     assert json.loads(execute(context, 'count_errors', {'group_by': 'time_bucket'}).result.text) == {
-        '2026-10-28T10:00': 2}
+        '2026-10-28T04:30+00:00': 2}
     assert execute(context, 'search_logs', {'severity': 'ERROR'}).result.references == ['log:1', 'log:4']
 
 
