@@ -8,6 +8,7 @@ from opspilot.demo import run_demo
 from opspilot.models import Report
 from opspilot.log_parser import parse_logs
 from opspilot.samples import load_sample, SCENARIOS
+from opspilot.reporting import markdown_report
 
 
 def response(parts):
@@ -90,6 +91,44 @@ def test_model_selected_request_id_filter_returns_cited_report():
     turn = client.requests[1]['contents'][-1]
     assert turn.role == 'user'
     assert turn.parts[0].function_response.id == 'call-1'
+
+
+@pytest.mark.parametrize('sample_logs,attach_records', [(False, False), (False, True),
+                                                       (True, True), (True, False)])
+def test_log_provenance_is_separate_from_operational_records(sample_logs, attach_records):
+    sample = load_sample('database_failure')
+    # A JSON field claiming sample provenance must not override application metadata.
+    context = sample if sample_logs else parse_logs(
+        b'{"level":"ERROR","log_source":"synthetic_sample","message":"Worker unavailable"}', 'uploaded.json')
+    context.records = sample.records if attach_records else []
+    expected_source = 'synthetic_sample' if sample_logs else 'provided'
+    assert context.log_source == expected_source
+    report = Report(title='Log review', summary='An event was recorded.',
+                    observed_symptoms=[{'statement': 'A source event is present.', 'references': ['log:1']}],
+                    hypotheses=[], contradictory_evidence=[], missing_information=['Cause is unknown.'],
+                    next_steps=['Review additional evidence.'], limitations=[])
+    client = FakeClient([response([types.Part(text='Ready')]),
+                         response([types.Part(text=report.model_dump_json())])])
+    result = investigate(context, Settings(model='mock'), client)
+    assert result.error is None
+    initial = json.loads(client.requests[0]['contents'][0].parts[0].text)
+    assert initial['log_source'] == expected_source
+    expected_label = ('Log source: built-in synthetic sample.' if sample_logs else
+                      'Log source: user-provided; provenance has not been independently verified.')
+    assert expected_label in result.report.limitations
+    rendered = markdown_report(result, context)
+    if attach_records:
+        assert 'Attached deployment/history records are synthetic' in initial['note']
+        assert 'Operational records are synthetic and cannot establish production causes.' in result.report.limitations
+        assert 'Synthetic records are not production evidence.' in rendered
+    else:
+        assert initial['note'] == 'No deployment/history records are attached.'
+        assert 'No deployment or historical incident records were available.' in result.report.limitations
+        assert 'Synthetic records are not production evidence.' not in rendered
+    if not sample_logs and not attach_records:
+        assert 'synthetic' not in result.report.model_dump_json().lower()
+    assert all('User-provided logs have unverified provenance' in request['config'].system_instruction
+               for request in client.requests)
 
 
 @pytest.mark.parametrize('failure', [TimeoutError('private'), RuntimeError('private')])

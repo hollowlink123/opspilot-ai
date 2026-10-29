@@ -34,6 +34,7 @@ class OperationalRecord(StrictModel):
 
 class Context(StrictModel):
     logs: list[LogEntry] = Field(max_length=MAX_LOG_LINES)
+    log_source: Literal['provided', 'synthetic_sample'] = 'provided'
     records: list[OperationalRecord] = Field(default_factory=list, max_length=200)
     warnings: list[ReportText] = Field(default_factory=list, max_length=30)
 

@@ -20,6 +20,9 @@ ACCESS_LINE = re.compile(
     r'"(?:\\.|[^"\\])*"\s+(?P<status>[1-5]\d{2})\s+(?:\d+|-)(?:\s|$)')
 ACCESS_MONTHS = {name: f'{number:02d}' for number, name in enumerate(
     ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'), 1)}
+APACHE_ERROR_LINE = re.compile(
+    r'^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?P<month>[A-Za-z]{3}) +(?P<day>\d{1,2}) '
+    r'(?P<time>\d{2}:\d{2}:\d{2}) (?P<year>\d{4})\]\s+\[(?P<level>[A-Za-z]+)\]')
 JAVA_CONTINUATION = re.compile(
     r'^\s*(?:(?:Caused by:|Suppressed:)\s+)?(?:[\w$]+\.)*[\w$]*(?:Error|Exception)(?::|$)'
     r'|^\s+at\s+\S+\([^)]*\)'
@@ -53,6 +56,14 @@ def structured_metadata(line: str) -> tuple[str | None, str, str | None] | None:
             stamp = next((record[key] for key in ('timestamp', '@timestamp', 'time') if key in record), None)
             # Message text and nested objects cannot supply missing event metadata.
             return parse_timestamp(stamp), normalize_level(level), safe_request_id(record.get('request_id'))
+    apache = APACHE_ERROR_LINE.match(line)
+    if apache:
+        month = ACCESS_MONTHS.get(apache['month'], '00')
+        stamp = f"{apache['year']}-{month}-{int(apache['day']):02d}T{apache['time']}"
+        # Apache notice is informational; retain its original spelling in the evidence.
+        level = {'notice': 'INFO', 'crit': 'CRITICAL', 'alert': 'CRITICAL',
+                 'emerg': 'CRITICAL'}.get(apache['level'].lower(), apache['level'])
+        return parse_timestamp(stamp), normalize_level(level), None
     access = ACCESS_LINE.match(line)
     if access:
         # nginx uses English month names regardless of the machine's locale.

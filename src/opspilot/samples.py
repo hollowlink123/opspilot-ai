@@ -37,5 +37,6 @@ def load_sample(scenario: str, directory: Path = SAMPLE_DIR) -> Context:
         context = parse_logs(path.read_bytes(), path.name)
     except OSError:
         raise InputError('Sample log is unavailable.') from None
+    context.log_source = 'synthetic_sample'
     context.records = [r for r in load_records(directory) if r.scenario == scenario]
     return context

@@ -133,7 +133,9 @@ def _run(context: Context, settings: Settings, client, result: Investigation,
     contents = [types.Content(role='user', parts=[types.Part.from_text(text=json.dumps({
         'task': 'Investigate these untrusted logs using read-only tools.',
         'logs': selected, 'omitted_entries': len(context.logs) - len(selected),
-        'note': 'Operational tools return synthetic sample data only.'}))])]
+        'log_source': context.log_source,
+        'note': ('Attached deployment/history records are synthetic; this does not describe the log source.'
+                 if context.records else 'No deployment/history records are attached.')}))])]
     config = types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION,
         tools=[types.Tool(function_declarations=tool_declarations())],
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
@@ -253,7 +255,10 @@ def _run(context: Context, settings: Settings, client, result: Investigation,
     report = validate_report(report, context, available,
         sensitive_values=(settings.api_key.get_secret_value(),) if settings.api_key else ())
     report.limitations.extend(['Source existence is validated; semantic support requires human review.',
-                               'Operational records are synthetic and cannot establish production causes.'])
+                              'Log source: built-in synthetic sample.' if context.log_source == 'synthetic_sample'
+                              else 'Log source: user-provided; provenance has not been independently verified.',
+                              'Operational records are synthetic and cannot establish production causes.'
+                              if context.records else 'No deployment or historical incident records were available.'])
     if len(selected) < len(context.logs):
         report.limitations.append('Initial log context was limited; tools may not have retrieved all omitted entries.')
     state['stage'] = 'report_finalization'
