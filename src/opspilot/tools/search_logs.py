@@ -5,6 +5,7 @@ from ..models import Context, SearchArgs, ToolResult
 def search_logs(context: Context, args: SearchArgs) -> ToolResult:
     matches = [entry for entry in context.logs
                if args.query.casefold() in entry.message.casefold()
+               and (args.request_id is None or entry.request_id == args.request_id)
                and (args.severity is None or entry.severity == args.severity)]
     selected = matches[:args.limit]
     return ToolResult(text=json.dumps([e.model_dump() for e in selected]),

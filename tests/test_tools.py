@@ -100,3 +100,42 @@ def test_wrong_record_schema(tmp_path):
     (tmp_path/'past_incidents.json').write_text('[]')
     with pytest.raises(InputError):
         load_records(tmp_path)
+
+
+@pytest.fixture
+def interleaved_requests():
+    records = [
+        {'request_id': 'req-17', 'level': 'INFO', 'message': 'Checkout started'},
+        {'request_id': 'req-170', 'level': 'ERROR', 'message': 'Image failed'},
+        {'request_id': 'req-17', 'level': 'ERROR', 'message': 'Database TIMEOUT'},
+        {'request_id': 'req-99', 'level': 'INFO', 'message': 'Note mentions req-17'},
+        {'request_id': 'REQ-17', 'level': 'ERROR', 'message': 'Another request'},
+        {'level': 'ERROR', 'message': 'Missing request ID'},
+    ]
+    return parse_logs('\n'.join(json.dumps(row) for row in records).encode(), 'requests.json')
+
+
+@pytest.mark.parametrize('arguments,references,truncated', [
+    ({'request_id': 'req-17'}, ['log:1', 'log:3'], False),
+    ({'request_id': 'REQ-17'}, ['log:5'], False),
+    ({'request_id': 'req-17', 'query': 'timeout', 'severity': 'ERROR'}, ['log:3'], False),
+    ({'request_id': 'req-17', 'severity': 'WARNING'}, [], False),
+    ({'request_id': 'req-17', 'limit': 1}, ['log:1'], True),
+    ({'request_id': 'absent'}, [], False),
+    ({'query': 'req-17'}, ['log:1', 'log:2', 'log:3', 'log:4', 'log:5'], False),
+    ({'request_id': None, 'severity': 'ERROR'}, ['log:2', 'log:3', 'log:5', 'log:6'], False),
+])
+def test_request_id_filter_combines_with_existing_search(interleaved_requests, arguments, references, truncated):
+    original = interleaved_requests.model_dump()
+    trace = execute(interleaved_requests, 'search_logs', arguments)
+    assert trace.error is None
+    assert trace.result.references == references
+    assert trace.result.truncated is truncated
+    assert interleaved_requests.model_dump() == original
+
+
+@pytest.mark.parametrize('request_id', ['', 'x' * 129, 17, True, []])
+def test_invalid_request_id_tool_argument_is_rejected(interleaved_requests, request_id):
+    trace = execute(interleaved_requests, 'search_logs', {'request_id': request_id})
+    assert trace.error == 'Invalid tool arguments.'
+    assert trace.result is None

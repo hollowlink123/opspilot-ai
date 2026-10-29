@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from pydantic import ValidationError
-from .models import Context, LogEntry, MAX_LOG_LINES, MAX_ENTRY_CHARS
+from .models import Context, LogEntry, MAX_LOG_LINES, MAX_ENTRY_CHARS, MAX_REQUEST_ID_CHARS
 
 
 class InputError(ValueError):
@@ -41,8 +41,8 @@ def parse_timestamp(value: Any) -> str | None:
     return None
 
 
-def structured_metadata(line: str) -> tuple[str | None, str] | None:
-    """Read bounded source fields, returning only normalized metadata, never raw values."""
+def structured_metadata(line: str) -> tuple[str | None, str, str | None] | None:
+    """Read bounded source fields, retaining only normalized or screened metadata."""
     if line.lstrip().startswith('{'):
         try:
             record = json.loads(line)
@@ -52,7 +52,7 @@ def structured_metadata(line: str) -> tuple[str | None, str] | None:
             level = next((record[key] for key in ('level', 'severity') if key in record), None)
             stamp = next((record[key] for key in ('timestamp', '@timestamp', 'time') if key in record), None)
             # Message text and nested objects cannot supply missing event metadata.
-            return parse_timestamp(stamp), normalize_level(level)
+            return parse_timestamp(stamp), normalize_level(level), safe_request_id(record.get('request_id'))
     access = ACCESS_LINE.match(line)
     if access:
         # nginx uses English month names regardless of the machine's locale.
@@ -62,7 +62,7 @@ def structured_metadata(line: str) -> tuple[str | None, str] | None:
         status = int(access['status'])
         # HTTP response classification, not a claim about an application's root cause.
         level = 'ERROR' if status >= 500 else 'WARNING' if status >= 400 else 'INFO'
-        return parse_timestamp(stamp), level
+        return parse_timestamp(stamp), level, None
     return None
 
 
@@ -109,6 +109,15 @@ def redact(text: str, sensitive_values: tuple[str, ...] = ()) -> str:
     return text
 
 
+def safe_request_id(value: Any) -> str | None:
+    """Keep exact, bounded identifiers; never correlate using redaction placeholders."""
+    if (isinstance(value, str) and 1 <= len(value) <= MAX_REQUEST_ID_CHARS
+            and value.strip() and value.isprintable()
+            and '[REDACTED' not in value.upper() and redact(value) == value):
+        return value
+    return None
+
+
 def redact_value(value: Any, sensitive_values: tuple[str, ...] = ()) -> Any:
     """Sanitize validated value trees, never serialized JSON or protocol signatures."""
     if isinstance(value, str):
@@ -123,7 +132,10 @@ def redact_value(value: Any, sensitive_values: tuple[str, ...] = ()) -> Any:
 def sanitize_context(context: Context, sensitive_values: tuple[str, ...] = ()) -> Context:
     """Revalidate even mutated/directly constructed input, then sanitize every field."""
     bounded = Context.model_validate(context.model_dump())
-    return Context.model_validate(redact_value(bounded.model_dump(), sensitive_values))
+    sanitized = redact_value(bounded.model_dump(), sensitive_values)
+    for entry in sanitized['logs']:
+        entry['request_id'] = safe_request_id(entry['request_id'])
+    return Context.model_validate(sanitized)
 
 
 def parse_logs(data: bytes, filename: str, max_bytes: int = 1048576) -> Context:
@@ -163,14 +175,14 @@ def parse_logs(data: bytes, filename: str, max_bytes: int = 1048576) -> Context:
                 entries[-1].end_line = number
             continue
         # Redaction can make serialized JSON unparsable. Inspect the bounded original
-        # only for normalized metadata; retain redacted physical lines as evidence.
+        # only for normalized/screened metadata; retain redacted physical lines as evidence.
         # Fully masked private-key lines must not contribute metadata either.
         metadata = structured_metadata(source_lines[number - 1]) if line != '[REDACTED_PRIVATE_KEY]' else None
         severity = re.search(r'\b(DEBUG|INFO|WARN(?:ING)?|ERROR|CRITICAL|FATAL)\b', line, re.I)
         stamp = ISO_TIMESTAMP.search(line)
-        timestamp, level = metadata if metadata is not None else (
+        timestamp, level, request_id = metadata if metadata is not None else (
             parse_timestamp(stamp[0]) if stamp else None,
-            normalize_level(severity[0]) if severity else 'UNKNOWN')
+            normalize_level(severity[0]) if severity else 'UNKNOWN', None)
         # Keep traceback continuation with its initiating event and exact line span.
         # Java frames/causes can themselves mention severity words or timestamps.
         continuation = metadata is None and entries and (JAVA_CONTINUATION.match(line) or (
@@ -182,7 +194,7 @@ def parse_logs(data: bytes, filename: str, max_bytes: int = 1048576) -> Context:
             entries[-1].end_line = number
         else:
             entries.append(LogEntry(line=number, end_line=number, timestamp=timestamp,
-                                    severity=level, message=line))
+                                    severity=level, message=line, request_id=request_id))
     try:
         return Context(logs=entries, warnings=[
             "Redaction is best effort; review logs before sending them externally.",
