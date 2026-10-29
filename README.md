@@ -11,6 +11,8 @@ OpsPilot AI is a local, single-user incident investigation application. It bring
 - Pydantic reports, deterministic citation checks, tool history and Markdown download.
 - Three fictional incidents with explicitly labeled, predetermined offline demonstrations.
 
+Error counts by minute normalize timezone-aware timestamps to UTC (`+00:00`). Timestamps without a timezone stay in separate, timezone-free buckets; missing or unusable timestamps are counted as `unknown`. Source timestamps and evidence are preserved.
+
 ## Installation
 
 Use Python 3.11 or newer and run from the repository root. Editable installation is required: sample datasets are read from this checkout.
