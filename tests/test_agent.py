@@ -51,6 +51,11 @@ def test_protocol_and_report():
         report_request['contents'][-1].parts[0].text
     assert client.requests[0]['config'].automatic_function_calling.disable
     assert len(tool_declarations()) == 4
+    rendered = markdown_report(result, load_sample(SCENARIOS[0]))
+    assert '## AI observations — unverified interpretation' in rendered
+    assert '| ERROR events | 3 |' in rendered
+    assert '## Cited source evidence' in rendered
+    assert '## Next actions' in rendered
 
 
 def test_report_request_rejects_invalid_report_without_provider_schema():
