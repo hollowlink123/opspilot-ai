@@ -21,6 +21,49 @@ def test_demo_ui_and_rerun():
     assert 'investigation' not in app.session_state
 
 
+@pytest.mark.parametrize('mode', ['demo', 'live'])
+def test_structured_report_is_identical_in_ui_and_download(monkeypatch, mode):
+    import streamlit as st
+    import opspilot.agent as agent
+    from opspilot.demo import run_demo
+    from opspilot.reporting import markdown_report
+    from opspilot.samples import load_sample
+
+    # Live UI rendering only: model generation is mocked, not verified live.
+    result = run_demo('database_failure')
+    result.mode = mode
+    calls = []
+
+    def fake_investigate(context, settings):
+        calls.append(context)
+        return result
+
+    downloads = []
+
+    def capture_download(label, data, **kwargs):
+        downloads.append((data, kwargs))
+        return False
+
+    monkeypatch.setattr(agent, 'investigate', fake_investigate)
+    monkeypatch.setattr(st, 'download_button', capture_download)
+    monkeypatch.setenv('GEMINI_API_KEY', 'SYNTHETIC_NOT_A_REAL_KEY')
+    monkeypatch.setenv('GEMINI_MODEL', 'synthetic-model')
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / 'app.py').run()
+    if mode == 'live':
+        app.radio[0].set_value('Live Gemini').run()
+        app.checkbox[0].check().run()
+    app.button[0].click().run()
+    assert not app.exception and not app.error
+    expected = markdown_report(result, load_sample('database_failure'))
+    # Streamlit strips surrounding whitespace from the displayed Markdown.
+    assert any(item.value == expected.strip() for item in app.markdown)
+    assert downloads[-1] == (expected, {'file_name': 'opspilot-report.md', 'mime': 'text/markdown'})
+    assert len(calls) == (1 if mode == 'live' else 0)
+    assert '## Computed log facts' in expected
+    assert '| log:4 |' in expected
+    assert '## Next actions' in expected
+
+
 def test_live_consent_resets_when_input_changes(monkeypatch):
     monkeypatch.setenv('GEMINI_API_KEY', 'SYNTHETIC_NOT_A_REAL_KEY')
     monkeypatch.setenv('GEMINI_MODEL', 'synthetic-model')

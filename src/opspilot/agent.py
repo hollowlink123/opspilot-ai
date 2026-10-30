@@ -238,7 +238,12 @@ def _run(context: Context, settings: Settings, client, result: Investigation,
     contents.append(types.Content(role='user', parts=[types.Part.from_text(
         text=('Return the final report as JSON matching this schema. Cite only available '
               'source references. All possible causes are hypotheses. Do not include '
-              'Markdown or additional fields.\n' + report_schema))]))
+              'Markdown or additional fields. Keep the summary to one or two sentences '
+              'and each finding brief. Distinguish observations from hypotheses; do not '
+              'repeat the same claim across findings. Order next_steps by suggested '
+              'investigation priority: concrete read-only checks, each stating which '
+              'uncertainty it would address. Citation existence alone does not prove '
+              'that a claim is supported.\n' + report_schema))]))
     state['stage'] = 'report_request'
     response = request(types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION,
         response_mime_type='application/json', max_output_tokens=8192))
