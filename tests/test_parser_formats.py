@@ -161,6 +161,40 @@ def test_json_missing_or_invalid_metadata_is_unknown(fields):
     assert entry.timestamp is None
 
 
+@pytest.mark.parametrize('fields', [
+    {'levelname': ' ERROR '}, {'log.level': '\terror\n'},
+    {'log': {'level': 'Error'}}, {'severity_text': 'ERROR'},
+    {'level': None, 'severity': 'ERROR'}, {'level': 'invalid', 'severity': 'ERROR'},
+    {'level': 40, 'severity': 'ERROR'}, {'level': [], 'levelname': 'ERROR'},
+    {'log': 'ERROR', 'severity_text': 'ERROR'},
+])
+def test_common_json_severity_fields_feed_tools_without_changing_source(fields):
+    source = json.dumps(fields | {'message': 'Request failed', 'request_id': 'req-17'})
+    context = parse_logs(source.encode(), 'synthetic.json')
+    entry, = context.logs
+    assert entry.severity == 'ERROR' and entry.request_id == 'req-17'
+    assert entry.message == source and entry.line == entry.end_line == 1
+    assert json.loads(execute(context, 'count_errors', {}).result.text) == {'ERROR': 1}
+    assert execute(context, 'search_logs', {'severity': 'ERROR'}).result.references == ['log:1']
+
+
+@pytest.mark.parametrize('fields,expected', [
+    ({'level': ' info ', 'severity': 'ERROR', 'levelname': 'CRITICAL'}, 'INFO'),
+    ({'level': None, 'severity': ' warn ', 'levelname': 'ERROR'}, 'WARNING'),
+    ({'levelname': 'INFO', 'log.level': 'ERROR'}, 'INFO'),
+    ({'log.level': 'INFO', 'severity_text': 'ERROR'}, 'INFO'),
+    ({'severity_text': 'INFO', 'log': {'level': 'ERROR'}}, 'INFO'),
+    ({'level': 40}, 'UNKNOWN'), ({'level': 50}, 'UNKNOWN'),
+    ({'severity_text': 17}, 'UNKNOWN'), ({'log': {'level': True}}, 'UNKNOWN'),
+    ({'message': {'level': 'ERROR'}}, 'UNKNOWN'),
+    ({'unrelated': {'level': 'ERROR'}}, 'UNKNOWN'),
+    ({'log': 'ERROR'}, 'UNKNOWN'),
+])
+def test_json_severity_precedence_and_unsupported_formats(fields, expected):
+    context = parse_logs(json.dumps(fields).encode(), 'synthetic.json')
+    assert context.logs[0].severity == expected
+
+
 @pytest.mark.parametrize('filename', ['application.log', 'application.txt', 'application.json'])
 def test_json_lines_keep_physical_positions_and_do_not_join_indented_events(filename):
     first = json.dumps({'level': 'INFO', 'message': 'ready'})

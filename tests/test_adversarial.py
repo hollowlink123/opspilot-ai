@@ -40,7 +40,7 @@ def tool_call(name, args):
 
 def report_for(context):
     return Report(title='Synthetic investigation', summary='Only synthetic observations.',
-        observed_symptoms=[Finding(statement='An error entry exists.', references=[f'log:{context.logs[0].line}'])],
+        observed_symptoms=[Finding(statement=context.logs[0].message.split('\n')[0], references=[f'log:{context.logs[0].line}'])],
         hypotheses=[], contradictory_evidence=[], missing_information=['Cause unknown.'],
         next_steps=['Review authorized evidence.'], limitations=['Mocked model; not live verification.'])
 

@@ -5,7 +5,7 @@ from google.genai import types
 from opspilot.agent import investigate, tool_declarations
 from opspilot.config import Settings
 from opspilot.demo import run_demo
-from opspilot.models import Report
+from opspilot.models import Finding, Report
 from opspilot.log_parser import parse_logs
 from opspilot.samples import load_sample, SCENARIOS
 from opspilot.reporting import markdown_report
@@ -81,7 +81,7 @@ def test_model_selected_request_id_filter_returns_cited_report():
                        for request_id in ['req-170', 'REQ-17', 'req-17'])
     context = parse_logs(source.encode(), 'a.json')
     report = Report(title='Request investigation', summary='A timeout was recorded.',
-                    observed_symptoms=[{'statement': 'Request req-17 timed out.', 'references': ['log:3']}],
+                    observed_symptoms=[{'statement': context.logs[2].message, 'references': ['log:3']}],
                     hypotheses=[], contradictory_evidence=[], missing_information=['Cause is unknown.'],
                     next_steps=['Review the database logs.'], limitations=[])
     client = FakeClient([call('search_logs', {'request_id': 'req-17'}),
@@ -109,7 +109,8 @@ def test_log_provenance_is_separate_from_operational_records(sample_logs, attach
     expected_source = 'synthetic_sample' if sample_logs else 'provided'
     assert context.log_source == expected_source
     report = Report(title='Log review', summary='An event was recorded.',
-                    observed_symptoms=[{'statement': 'A source event is present.', 'references': ['log:1']}],
+                    observed_symptoms=[{'statement': context.logs[0].message if sample_logs else 'Worker unavailable',
+                                        'references': ['log:1']}],
                     hypotheses=[], contradictory_evidence=[], missing_information=['Cause is unknown.'],
                     next_steps=['Review additional evidence.'], limitations=[])
     client = FakeClient([response([types.Part(text='Ready')]),
@@ -410,3 +411,59 @@ def test_redaction_exposed_causal_claim_fails_in_agent(caplog):
     assert result.report is None
     assert 'evidence_validation/unsupported_causal_claim' in result.error
     assert 'CANARY' not in result.error + caplog.text
+
+
+@pytest.mark.parametrize('observation', ['ConnectionError: db connection refused', '',
+                                        'Database disk was full. SYNTHETIC_PRIVATE'])
+def test_live_observation_contract_without_extra_model_calls(observation, caplog):
+    report = run_demo('database_failure').report
+    report.hypotheses = []
+    report.observed_symptoms = ([Finding(statement=observation, references=['log:4'])]
+                               if observation else [])
+    client = FakeClient([call('search_logs', {'severity': 'ERROR'}),
+                         response([types.Part(text='Ready')]),
+                         response([types.Part(text=report.model_dump_json())])])
+    context = load_sample('database_failure')
+    result = investigate(context, Settings(model='mock'), client)
+    assert len(client.requests) == 3
+    assert len(result.traces) == 1 and result.traces[0].result
+    config = client.requests[-1]['config']
+    assert config.response_mime_type == 'application/json'
+    assert config.response_schema is None and config.response_json_schema is None
+    assert config.automatic_continuation is False
+    instruction = client.requests[-1]['contents'][-1].parts[0].text
+    assert 'every cited redacted physical log line' in instruction
+    assert 'observed_symptoms=[]' in instruction
+    if 'SYNTHETIC_PRIVATE' in observation:
+        assert result.report and result.error is None
+        assert 'SYNTHETIC_PRIVATE' not in result.model_dump_json() + caplog.text
+        assert any('Original wording was discarded' in item for item in result.report.limitations)
+    assert result.error is None and result.report
+    rendered = markdown_report(result, context)
+    assert '| ERROR events | 3 |' in rendered
+
+
+def test_mocked_live_json_severity_and_fallback_report_rendering(caplog):
+    rows = [
+        {'levelname': ' error ', 'request_id': 'req-17', 'message': 'Pool timeout', 'password': 'SYNTHETIC_CANARY'},
+        {'log': {'level': 'WARNING'}, 'request_id': 'req-18', 'message': 'Slow response'},
+    ]
+    context = parse_logs('\n'.join(json.dumps(row) for row in rows).encode(), 'synthetic.json')
+    report = Report(title='Synthetic assessment', summary='No confirmed root cause is available.',
+                    observed_symptoms=[Finding(statement='The database disk was full.', references=['log:1', 'log:2'])],
+                    hypotheses=[], contradictory_evidence=[], missing_information=['Storage metrics are unavailable.'],
+                    next_steps=['Review authorized storage metrics.'], limitations=[])
+    client = FakeClient([call('count_errors'), call('search_logs'), response([types.Part(text='Ready')]),
+                         response([types.Part(text=report.model_dump_json())])])
+    result = investigate(context, Settings(model='mock'), client)
+    assert result.report and result.error is None
+    assert len(client.requests) == 4
+    assert json.loads(result.traces[0].result.text) == {'ERROR': 1}
+    assert result.traces[1].result.references == ['log:1', 'log:2']
+    assert [f.references for f in result.report.observed_symptoms] == [['log:1'], ['log:2']]
+    assert result.report.hypotheses == []
+    rendered = markdown_report(result, context)
+    assert '| ERROR events | 1 |' in rendered
+    assert 'The database disk was full' not in rendered
+    assert 'Original wording was discarded' in rendered
+    assert 'SYNTHETIC_CANARY' not in rendered + result.model_dump_json() + caplog.text

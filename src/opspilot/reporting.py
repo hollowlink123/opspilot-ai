@@ -3,7 +3,7 @@ import html
 import re
 import unicodedata
 from .log_parser import redact_value, sanitize_context
-from .models import Context, Report, Investigation
+from .models import Context, Finding, Report, Investigation
 
 
 class ReportError(ValueError):
@@ -14,6 +14,18 @@ class CausalClaimError(ReportError):
     """A report asserts causal certainty this application cannot establish."""
 
 
+class ObservationError(ReportError):
+    """Safe source-bound observations cannot be produced within report limits."""
+
+
+OBSERVATION_FALLBACK_NOTICE = (
+    'Observation wording did not match every cited line and was replaced with '
+    'Python-generated redacted source excerpts. Original wording was discarded, not verified.')
+EXCERPT_LIMIT_NOTICE = (
+    'Some source excerpts were shortened to at most 2000 characters. '
+    'Full cited lines remain in the source evidence.')
+
+
 def reject_causal_certainty(report: Report) -> None:
     # This is a conservative wording guard, not semantic entailment checking.
     texts = [report.title, report.summary, *report.missing_information,
@@ -22,19 +34,31 @@ def reject_causal_certainty(report: Report) -> None:
               report.hypotheses + report.contradictory_evidence]
     certainty = r'\b(?:confirmed|proven|verified|definitive(?:ly)?|certain(?:ly)?|established)\b'
     cause = r'\b(?:root\s+cause|cause|caused|causality)\b'
+    # Only complete, simple cautious clauses are exempt. Do not strip arbitrary
+    # negation words: "not only", double negation and appended claims must still
+    # pass through the existing certainty guard.
+    cautious = (
+        r'(?:(?:a|the) )?(?:shared |root )?cause (?:is|was|remains) '
+        r'(?:unknown|unconfirmed|not (?:yet )?(?:confirmed|established|proven|verified))'
+        r'|(?:a|the) deployment is not the confirmed cause'
+        r'|no confirmed (?:root )?cause(?: is available)?'
+    )
     for text in texts:
         normalized = unicodedata.normalize('NFKC', text).casefold()
         normalized = ''.join(c for c in normalized if unicodedata.category(c) != 'Cf')
         normalized = re.sub(r'[*_`#]', '', normalized)
         normalized = ' '.join(normalized.split())
+        clauses = re.split(r'[.!?;]|\b(?:but|however)\b', normalized)
+        normalized = '. '.join(clause for clause in clauses
+                               if not re.fullmatch(cautious, clause.strip(' ,')))
         if (re.search(certainty + r'.{0,80}' + cause, normalized)
                 or re.search(cause + r'.{0,80}' + certainty, normalized)
                 or re.search(r'\broot\s+cause\s*(?::|=|\bis\b|\bwas\b)', normalized)):
             raise CausalClaimError('Report asserts unsupported causal certainty.')
 
 
-def evidence_catalog(context: Context) -> dict[str, str]:
-    context = sanitize_context(context)
+def evidence_catalog(context: Context, sensitive_values: tuple[str, ...] = ()) -> dict[str, str]:
+    context = sanitize_context(context, sensitive_values)
     catalog = {}
     for entry in context.logs:
         for offset, line in enumerate(entry.message.split('\n')):
@@ -46,7 +70,8 @@ def evidence_catalog(context: Context) -> dict[str, str]:
 def validate_report(report: Report, context: Context, available: set[str] | None = None,
                     sensitive_values: tuple[str, ...] = ()) -> Report:
     report = Report.model_validate(report.model_dump())
-    valid = set(evidence_catalog(context))
+    catalog = evidence_catalog(context, sensitive_values)
+    valid = set(catalog)
     if available is not None:
         valid &= available
     sanitized_report = Report.model_validate(redact_value(report.model_dump(), sensitive_values))
@@ -57,6 +82,45 @@ def validate_report(report: Report, context: Context, available: set[str] | None
             if not set(finding.references) <= valid:
                 raise ReportError('Report cites nonexistent or unavailable evidence.')
         reject_causal_certainty(candidate)
+    # Compare the text that can actually be rendered, after redaction on both
+    # sides. str.split() trims and collapses Unicode whitespace to ASCII spaces;
+    # case, punctuation and JSON escape sequences are otherwise unchanged.
+    sources = {ref: ' '.join(text.split()) for ref, text in catalog.items()
+               if ref.startswith('log:')}
+    observations = []
+    replaced_refs = set()
+    shortened = False
+    for finding in sanitized_report.observed_symptoms:
+        excerpt = ' '.join(finding.statement.split())
+        if excerpt and all(ref in sources and excerpt in sources[ref] for ref in finding.references):
+            observations.append(finding)
+        else:
+            for ref in finding.references:
+                if ref not in sources or not sources[ref]:
+                    raise ObservationError('A cited log line cannot supply a safe excerpt.')
+                if ref in replaced_refs:
+                    continue
+                source = sources[ref]
+                shortened |= len(source) > 2000
+                observations.append(Finding(statement=source[:2000], references=[ref]))
+                replaced_refs.add(ref)
+        if len(observations) > 30:
+            raise ObservationError('Source excerpts exceed the report observation limit.')
+    if not replaced_refs:
+        return sanitized_report
+    sanitized_report.observed_symptoms = observations
+    notices = [OBSERVATION_FALLBACK_NOTICE] + ([EXCERPT_LIMIT_NOTICE] if shortened else [])
+    for notice in notices:
+        if notice not in sanitized_report.limitations:
+            sanitized_report.limitations.append(notice)
+    # Generated excerpts must survive redaction and all existing schema/causal
+    # checks too. Never hide missing disclosure by dropping existing limitations.
+    sanitized_report = Report.model_validate(redact_value(sanitized_report.model_dump(), sensitive_values))
+    reject_causal_certainty(sanitized_report)
+    for finding in sanitized_report.observed_symptoms:
+        excerpt = ' '.join(finding.statement.split())
+        if not excerpt or any(ref not in sources or excerpt not in sources[ref] for ref in finding.references):
+            raise ObservationError('Generated excerpt could not be safely preserved.')
     return sanitized_report
 
 
