@@ -30,7 +30,7 @@ JAVA_CONTINUATION = re.compile(
 
 
 def normalize_level(value: Any) -> str:
-    level = value.upper() if isinstance(value, str) else 'UNKNOWN'
+    level = value.strip().upper() if isinstance(value, str) else 'UNKNOWN'
     level = {'WARN': 'WARNING', 'FATAL': 'CRITICAL'}.get(level, level)
     return level if level in {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'} else 'UNKNOWN'
 
@@ -52,9 +52,15 @@ def structured_metadata(line: str) -> tuple[str | None, str, str | None] | None:
         except (ValueError, RecursionError):
             record = None
         if isinstance(record, dict):
-            level = next((record[key] for key in ('level', 'severity') if key in record), None)
+            # Preserve level/severity precedence when valid; skip unusable values.
+            values = [record.get(key) for key in ('level', 'severity', 'levelname', 'log.level', 'severity_text')]
+            nested_log = record.get('log')
+            if isinstance(nested_log, dict):
+                values.append(nested_log.get('level'))
+            level = next((normalized for value in values
+                          if (normalized := normalize_level(value)) != 'UNKNOWN'), 'UNKNOWN')
             stamp = next((record[key] for key in ('timestamp', '@timestamp', 'time') if key in record), None)
-            # Message text and nested objects cannot supply missing event metadata.
+            # Message text and unrelated nested objects cannot supply metadata.
             return parse_timestamp(stamp), normalize_level(level), safe_request_id(record.get('request_id'))
     apache = APACHE_ERROR_LINE.match(line)
     if apache:

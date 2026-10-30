@@ -17,8 +17,9 @@ def run_demo(scenario: str) -> Investigation:
         ('search_logs', {'severity':'ERROR'}), ('count_errors', {}),
         ('get_recent_deployments', {}), ('find_similar_incidents', {'query': 'synthetic'})]]
     report = Report(title=scenario.replace('_', ' ').title(),
-        summary='Predetermined synthetic demonstration: three error events are present. No live model inference occurred.',
-        observed_symptoms=[Finding(statement='Three error events appear in the supplied synthetic log.', references=['log:4','log:8','log:10'])],
+        summary='Predetermined synthetic demonstration of logged failures. No live model inference occurred.',
+        observed_symptoms=[Finding(statement=entry.message.split('\n')[0], references=[f'log:{entry.line}'])
+                           for entry in context.logs if entry.severity == 'ERROR'],
         hypotheses=[Finding(statement=HYPOTHESES[scenario], references=['log:4',f'deployment:{scenario}'])],
         contradictory_evidence=[Finding(statement='A background worker succeeds, which limits a hypothesis of universal service failure.', references=['log:9'])],
         missing_information=['Production metrics and configuration are unavailable.', 'The history is synthetic; similarity is not proof.'],

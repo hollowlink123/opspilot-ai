@@ -14,7 +14,7 @@ from test_agent import FakeClient, call, response
 
 def report_for(context):
     return Report(title='Synthetic review',summary='Cause remains unknown.',
-        observed_symptoms=[Finding(statement='An event was recorded.',references=['log:1'])],
+        observed_symptoms=[Finding(statement=context.logs[0].message.split('\n')[0],references=['log:1'])],
         hypotheses=[],contradictory_evidence=[],missing_information=['Independent evidence.'],
         next_steps=['Review authorized records.'],limitations=['Synthetic test.'])
 

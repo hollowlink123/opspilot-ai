@@ -10,7 +10,7 @@ from .config import Settings
 from .log_parser import InputError, sanitize_context
 from .models import Context, Investigation, Report
 from .prompts import SYSTEM_INSTRUCTION
-from .reporting import CausalClaimError, ReportError, validate_report
+from .reporting import CausalClaimError, ObservationError, ReportError, validate_report
 from .tools import REGISTRY, execute
 
 
@@ -61,6 +61,8 @@ def failure_category(exc: Exception) -> str:
         return 'input_limit'
     if isinstance(exc, CausalClaimError):
         return 'unsupported_causal_claim'
+    if isinstance(exc, ObservationError):
+        return 'unsupported_observation'
     if isinstance(exc, ReportError):
         return 'invalid_evidence_reference'
     if isinstance(exc, ValidationError):
@@ -239,7 +241,17 @@ def _run(context: Context, settings: Settings, client, result: Investigation,
         text=('Return the final report as JSON matching this schema. Cite only available '
               'source references. All possible causes are hypotheses. Do not include '
               'Markdown or additional fields. Keep the summary to one or two sentences '
-              'and each finding brief. Distinguish observations from hypotheses; do not '
+              'and each finding brief. Each observed_symptoms statement must be a '
+              'nonempty contiguous excerpt (at most 2000 characters) copied from every '
+              'cited redacted physical log line, with log:N references only. Whitespace '
+              'may be trimmed or collapsed to single spaces; preserve case, punctuation '
+              'and literal JSON escape sequences. Do not add quotation marks, prefixes, '
+              'paraphrases, counts or interpretations to excerpts. Use separate findings '
+              'for different lines; never combine text from different requests. If no '
+              'suitable excerpt is available, use observed_symptoms=[]. Counts are '
+              'computed separately by Python. Keep cautious explanations in hypotheses '
+              'and legitimate comparisons in contradictory_evidence. Distinguish '
+              'observations from hypotheses; do not '
               'repeat the same claim across findings. Order next_steps by suggested '
               'investigation priority: concrete read-only checks, each stating which '
               'uncertainty it would address. Citation existence alone does not prove '
